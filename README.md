@@ -9,6 +9,8 @@ P-Tech Omnite は、FiveM ロールプレイサーバー向けの共通ユーテ
 | リソース | 概要 | 状態 |
 |---|---|---|
 | `ptech_omnite_seating` | ワールド内の椅子に座る機能 | 開発中 |
-| `ptech_omnite_requests` | 一般依頼・ジョブ依頼を扱う依頼ボード | 設計中 |
+| `ptech_omnite_requests` | 一般・ジョブボードと受注・納品ミッション | 初期実装中 |
 
 各リソースの導入方法や動作条件は、それぞれのリソース内の資料を参照してください。
+
+開発・仕様・検証状況は [DEVELOPMENT.md](DEVELOPMENT.md) を参照してください。
