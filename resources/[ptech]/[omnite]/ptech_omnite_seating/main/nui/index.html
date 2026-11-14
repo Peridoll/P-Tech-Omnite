@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="ja">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel="stylesheet" href="style.css">
+    <title>Omnite Seating</title>
+</head>
+<body>
+    <main id="copy-panel" class="hidden" role="dialog" aria-modal="true" aria-labelledby="title">
+        <h1 id="title">座席設定をコピー</h1>
+        <p>下のボタンで設定行をクリップボードにコピーします。</p>
+        <textarea id="config-line" readonly spellcheck="false"></textarea>
+        <div class="actions">
+            <button id="copy-button" type="button">コピー</button>
+            <button id="close-button" class="secondary" type="button">閉じる</button>
+        </div>
+        <p id="status" aria-live="polite"></p>
+    </main>
+    <script src="app.js"></script>
+</body>
+</html>

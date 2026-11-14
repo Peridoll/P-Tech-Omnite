@@ -1,0 +1,6 @@
+{
+  "name": "ptech-omnite-seating-checks",
+  "private": true,
+  "scripts": { "test": "node dev/tests/run.cjs" },
+  "devDependencies": { "fengari": "0.1.4", "luaparse": "0.3.1" }
+}
