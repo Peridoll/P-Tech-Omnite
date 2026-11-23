@@ -1,0 +1,6 @@
+{
+  "name": "ptech-omnite-toolbox-checks",
+  "private": true,
+  "scripts": { "test": "node dev/tests/run.cjs && node dev/tests/nui_spec.cjs" },
+  "devDependencies": { "fengari": "0.1.4", "luaparse": "0.3.1", "jsdom": "26.1.0" }
+}

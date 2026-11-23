@@ -1,0 +1,1 @@
+{"name":"ptech-omnite-garages-checks","private":true,"scripts":{"test":"node dev/run.cjs"},"devDependencies":{"fengari":"0.1.4","luaparse":"0.3.1"}}
