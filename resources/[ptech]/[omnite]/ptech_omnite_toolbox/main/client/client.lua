@@ -122,7 +122,7 @@ local function canStartSitting(patientBed)
         and not pendingSeatKey
         and not setupState
         and not (SeatingClient and SeatingClient.placing)
-        and not (SeatingClient and (SeatingClient.teleporting or SeatingClient.teleportManaging))
+        and not (SeatingClient and (SeatingClient.teleporting or SeatingClient.teleportManaging or SeatingClient.circleManaging))
         and not IsPedInAnyVehicle(ped, false)
         and (patientBed or not IsPedDeadOrDying(ped, true))
         and (patientBed or not IsPedRagdoll(ped))
@@ -592,7 +592,7 @@ SeatingClient = {
     notify = notify,
     copy = copyConfigToClipboard,
     busy = function() return standing or currentSeat or pendingSeatKey or setupState
-        or SeatingClient.teleporting or SeatingClient.teleportManaging end,
+        or SeatingClient.teleporting or SeatingClient.teleportManaging or SeatingClient.circleManaging end,
     drawText = drawDebugText,
     debug = function() return seatDebugEnabled end,
     bucket = 0,

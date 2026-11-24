@@ -6,6 +6,19 @@ const root = path.resolve(__dirname, '../..');
 for (const file of ['config.lua', 'fxmanifest.lua', 'main/client/exit.lua', 'main/client/client.lua', 'main/client/placement.lua', 'main/server/server.lua', 'main/server/placement.lua', 'main/client/teleporters.lua', 'main/server/teleporters.lua']) {
   parser.parse(fs.readFileSync(path.join(root, file), 'utf8'), { luaVersion: '5.3' });
 }
+for (const side of ['server', 'client']) {
+  parser.parse(fs.readFileSync(path.join(root, `main/${side}/circles.lua`), 'utf8'), { luaVersion: '5.3' });
+  const state = lauxlib.luaL_newstate();
+  lualib.luaL_openlibs(state);
+  for (const file of [`dev/tests/circle_${side}_spec.lua`, 'config.lua', `main/${side}/circles.lua`]) {
+    const code = fs.readFileSync(path.join(root, file), 'utf8');
+    if (lauxlib.luaL_loadbuffer(state, to_luastring(code), null, to_luastring(file)) !== lua.LUA_OK || lua.lua_pcall(state, 0, 0, 0) !== lua.LUA_OK)
+      throw new Error(to_jsstring(lua.lua_tostring(state, -1)));
+  }
+  if (lauxlib.luaL_dostring(state, to_luastring('runCircleSpecs()')) !== lua.LUA_OK)
+    throw new Error(to_jsstring(lua.lua_tostring(state, -1)));
+  console.log(`PASS: circle ${side} behavior`);
+}
 const L = lauxlib.luaL_newstate();
 lualib.luaL_openlibs(L);
 function run(text, name) {

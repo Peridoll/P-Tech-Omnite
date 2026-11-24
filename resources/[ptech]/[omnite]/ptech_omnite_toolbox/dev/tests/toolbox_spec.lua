@@ -2,6 +2,7 @@ local exported,contexts = {},{}
 local useResult,auth,busy = true,true,false
 local uses,shown,checks = 0,0,0
 local pending
+local admin=false
 Config={Placement={command='omnite_seating'},Seating={}}
 SeatingClient={
     busy=function() return busy end,
@@ -10,7 +11,7 @@ SeatingClient={
 lib={
     callback={await=function()
         checks=checks+1
-        return auth and {ok=true,ems=false,admin=false} or {ok=false,message='denied'}
+        return auth and {ok=true,ems=false,admin=admin} or {ok=false,message='denied'}
     end},
     registerContext=function(context) contexts[context.id]=context end,
     showContext=function() shown=shown+1 end,
@@ -20,6 +21,8 @@ exports=setmetatable({ox_inventory={useItem=function(_,data,cb)
     uses=uses+1
     if useResult=='pending' then pending=cb else cb(useResult) end
 end}},{__call=function(_,name,cb) exported[name]=cb end})
+local deliveryState = 'missing'
+function GetResourceState() return deliveryState end
 function AddEventHandler() end
 function RegisterNetEvent() end
 function RegisterCommand() end
@@ -34,7 +37,7 @@ function runToolboxSpecs()
     use(data)
     assert(uses==1 and shown==1 and checks==1,'successful inventory use opens menu after auth')
     assert(contexts.omnite_seat_tool.title=='Omini工具箱')
-    assert(#contexts.omnite_seat_tool.options==3 and contexts.omnite_seat_tool.options[1].title=='椅子やベッドの管理' and contexts.omnite_seat_tool.options[2].title=='ガレージの管理' and contexts.omnite_seat_tool.options[3].title=='テレポーターの管理','toolbox exposes seating, garage and teleporter management')
+    assert(#contexts.omnite_seat_tool.options==2 and contexts.omnite_seat_tool.options[1].title=='椅子やベッドの管理' and contexts.omnite_seat_tool.options[2].title=='テレポーターの管理','toolbox exposes seating and teleporter management')
     useResult=false
     use(data)
     assert(shown==1 and checks==1,'cancelled inventory use never opens menu')
@@ -52,4 +55,13 @@ function runToolboxSpecs()
     busy=false SeatingClient.placing=true
     before=uses use(data)
     assert(uses==before,'placement cannot open another toolbox')
+    SeatingClient.placing=false
+    useResult=true admin=true
+    use(data)
+    assert(#contexts.omnite_seat_tool.options==4, 'admin toolbox exposes circle settings and config export without garages')
+    assert(contexts.omnite_seat_tool.options[3].title=='サークルエリアの管理', 'circle management is visible to admins')
+    deliveryState='started'
+    use(data)
+    assert(#contexts.omnite_seat_tool.options==5,'running delivery exposes admin manager')
+    assert(contexts.omnite_seat_tool.options[3].icon=='truck-fast','delivery menu is linked')
 end

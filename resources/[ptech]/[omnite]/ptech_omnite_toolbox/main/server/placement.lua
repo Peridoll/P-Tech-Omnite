@@ -17,7 +17,11 @@ local function isEms(src)
     return data and data.job and Config.Placement.emsJobs[data.job.name] == true
 end
 
-local function admin(src) return IsPlayerAceAllowed(src, Config.Placement.adminAce) end
+local function admin(src)
+    return IsPlayerAceAllowed(src, Config.Placement.adminAce)
+        or IsPlayerAceAllowed(src, 'admin')
+        or IsPlayerAceAllowed(src, 'god')
+end
 local function fail(text) return { ok = false, message = text } end
 
 local function authorize(src)
@@ -39,6 +43,7 @@ function S.sendPlacements(src)
     for id, seat in pairs(S.placed) do if seat.bucket == bucket then state[id] = seat end end
     TriggerClientEvent(prefix .. 'client:placements', src, state, bucket)
     if S.sendTeleporters then S.sendTeleporters(src) end
+    if S.sendCircles then S.sendCircles(src) end
 end
 
 local function publish()

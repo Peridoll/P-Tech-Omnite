@@ -437,13 +437,17 @@ local function openTool()
     opening=false
     if not auth then return end
     local options={{title='椅子やベッドの管理',description='管理モードに入り、近くの登録地点を表示します',onSelect=beginManagement}}
-    options[#options+1]={title='ガレージの管理',description='既存ガレージの受付位置・出庫位置を指定します',onSelect=function()
-        if GetResourceState('ptech_omnite_garages')~='started' then C.notify('ptech_omnite_garagesを起動してください。') return end
-        exports.ptech_omnite_garages:openManager()
-    end}
     options[#options+1]={title='テレポーターの管理',description='2点を指定し、一方通行・双方向の移動を登録します',onSelect=function()
         if C.openTeleporters then C.openTeleporters() end
     end}
+    if auth.admin and GetResourceState('ptech_omnite_delivery')=='started' then
+        options[#options+1]={title='配達・素材仕入れの管理',icon='truck-fast',onSelect=function()
+            exports.ptech_omnite_delivery:openManager()
+        end}
+    end
+    if auth.admin then options[#options+1]={title='サークルエリアの管理',onSelect=function()
+        if C.openCircles then C.openCircles() end
+    end} end
     if auth.admin then options[#options+1]={title='DBからConfigへ出力',onSelect=function()
         local choices={{value='__all',label='すべて'}}
         for _,entry in ipairs(auth.mlos or {}) do choices[#choices+1]={value=entry.id,label=entry.label} end

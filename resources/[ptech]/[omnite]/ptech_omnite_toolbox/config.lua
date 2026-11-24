@@ -1,5 +1,16 @@
 Config = {}
 
+Config.Circles = {
+    interactDistance = 1.75,
+    markerDistance = 30.0,
+    maxTotal = 100,
+    maxRadius = 5000.0,
+    maxDelay = 3600,
+    blipColour = 1,
+    blipAlpha = 90,
+    escapeDestination = { x = 215.76, y = -810.12, z = 30.73, heading = 157.0 },
+}
+
 Config.Teleporters = {
     interactDistance = 1.75,
     markerDistance = 25.0,

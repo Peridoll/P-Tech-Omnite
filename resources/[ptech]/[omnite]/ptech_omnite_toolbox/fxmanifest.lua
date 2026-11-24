@@ -8,8 +8,8 @@ description 'Omnite toolbox: seating, beds, garages and two-point teleporters'
 version '0.6.0-dev'
 
 shared_scripts { '@ox_lib/init.lua', 'config.lua' }
-client_scripts { 'main/client/client.lua', 'main/client/placement.lua', 'main/client/teleporters.lua' }
-server_scripts { '@oxmysql/lib/MySQL.lua', 'main/server/server.lua', 'main/server/placement.lua', 'main/server/teleporters.lua' }
+client_scripts { 'main/client/client.lua', 'main/client/placement.lua', 'main/client/teleporters.lua', 'main/client/circles.lua' }
+server_scripts { '@oxmysql/lib/MySQL.lua', 'main/server/server.lua', 'main/server/placement.lua', 'main/server/teleporters.lua', 'main/server/circles.lua' }
 
 ui_page 'main/nui/index.html'
 
