@@ -74,6 +74,9 @@ function runCircleSpecs()
     dbFail=true assert(not invoke(1,'save',p).ok,'failed persistence does not publish') dbFail=false
     local saved=invoke(1,'save',p) assert(saved.ok)
     p.id,p.revision=saved.id,1
+    assert(invoke(1,'appearance',p.id).ok,'inside active circle can open initial appearance')
+    assert(not invoke(2,'appearance',p.id).ok,'outside circle cannot open initial appearance')
+    buckets[1]=1 assert(not invoke(1,'appearance',p.id).ok,'other bucket cannot open initial appearance') buckets[1]=0
     local list=invoke(2,'list')
     assert(list.ok and not list.admin and list.points[p.id],'ordinary player gets interaction state')
     assert(not list.points[p.id].password,'password not public')

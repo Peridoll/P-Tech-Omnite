@@ -28,7 +28,8 @@ function run(text, name) {
 }
 run(fs.readFileSync(path.join(__dirname, 'server_spec.lua'), 'utf8'), 'server_spec');
 for (const file of ['config.lua', 'main/server/server.lua', 'main/server/placement.lua']) run(fs.readFileSync(path.join(root, file), 'utf8'), file);
-run('runSpecs()', 'assertions');
+run(fs.readFileSync(path.join(root,'shared/csv.lua'),'utf8'),'csv');
+run('runSpecs(); runCsvSpecs()', 'assertions');
 console.log('PASS: Lua syntax and server behavior');
 const client = lauxlib.luaL_newstate();
 lualib.luaL_openlibs(client);
@@ -52,6 +53,7 @@ function editorRun(text, name) {
 editorRun(fs.readFileSync(path.join(__dirname, 'editor_spec.lua'), 'utf8'), 'editor_spec');
 editorRun(fs.readFileSync(path.join(root, 'config.lua'), 'utf8'), 'config');
 editorRun(fs.readFileSync(path.join(root, 'main/client/placement.lua'), 'utf8'), 'placement_client');
+editorRun(fs.readFileSync(path.join(root, 'main/client/data.lua'),'utf8'),'data_client');
 editorRun('runEditorSpecs()', 'editor_assertions');
 console.log('PASS: management markers, E create/edit/delete, MLO selection, medical types, sliders and ALT');
 const sitting = lauxlib.luaL_newstate();
@@ -80,6 +82,7 @@ for (const side of ['server', 'client']) {
   execute(fs.readFileSync(path.join(__dirname, `teleport_${side}_spec.lua`), 'utf8'), `teleport_${side}_spec`);
   execute(fs.readFileSync(path.join(root, 'config.lua'), 'utf8'), 'config');
   execute(fs.readFileSync(path.join(root, `main/${side}/teleporters.lua`), 'utf8'), `teleport_${side}`);
-  execute('runTeleportSpecs()', `teleport_${side}_assertions`);
+  execute(fs.readFileSync(path.join(root,'shared/csv.lua'),'utf8'),'csv');
+  execute('runTeleportSpecs()'+(side==='server'?'; runTeleportCsvSpecs()':''), `teleport_${side}_assertions`);
   console.log(`PASS: teleporter ${side} behavior`);
 }

@@ -91,6 +91,7 @@ local function open(kind)
     if not SeatingClient.managing then
         exported.usePlacementTool({})
         contexts.omnite_seat_tool.options[1].onSelect()
+        contexts.omnite_data_menu.options[1].onSelect()
     end
     step(1) press(38)
     contexts.omnite_seat_edit.options[1].onSelect()

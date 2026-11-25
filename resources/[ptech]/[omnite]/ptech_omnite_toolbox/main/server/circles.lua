@@ -83,6 +83,16 @@ lib.callback.register(prefix..'list',function(src)
     if not ready then return fail('サークルDBの準備ができていません。') end
     return {ok=true,points=state(src),bucket=GetPlayerRoutingBucket(src),admin=admin(src)}
 end)
+lib.callback.register(prefix..'appearance',function(src,id)
+    if not ready or not rate(src) then return fail('少し待ってから操作してください。') end
+    local p=points[tostring(id)]
+    local ped=GetPlayerPed(src)
+    if not p or not p.enabled or p.bucket~=GetPlayerRoutingBucket(src) or ped==0
+        or not inside(GetEntityCoords(ped),p) or GetVehiclePedIsIn(ped,false)~=0 or S.hasSeat(src) then
+        return fail('有効なサークル内で、徒歩で立った状態で操作してください。')
+    end
+    return {ok=true}
+end)
 lib.callback.register(prefix..'capture',function(src)
     if not admin(src) then return fail('管理者のみ操作できます。') end
     local ped=GetPlayerPed(src)

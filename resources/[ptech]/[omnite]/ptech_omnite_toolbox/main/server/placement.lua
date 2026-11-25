@@ -309,3 +309,77 @@ exports('PlacePatientInBed', function(actor,patient,id)
     if GetInvokingResource() ~= Config.Placement.medicalResource then return fail('Mediora専用の連携口です。') end
     return placePatient(actor,patient,id)
 end)
+
+local csvHeaders={'id','mlo','name','kind','x','y','z','heading','style','group','bucket'}
+lib.callback.register(prefix..'csv',function(src,action,input)
+    local owner,err=authorize(src)
+    if not owner then return err end
+    if action=='export' then
+        local rows={}
+        for id,p in pairs(S.placed) do
+            if p.bucket==GetPlayerRoutingBucket(src) then
+                rows[#rows+1]={id=id,mlo=p.mlo,name=p.name,kind=p.kind,x=p.coords.x,y=p.coords.y,z=p.coords.z,
+                    heading=p.heading,style=p.style,group=p.group,bucket=p.bucket}
+            end
+        end
+        table.sort(rows,function(a,b) return tonumber(a.id)<tonumber(b.id) end)
+        local text=OmniteCsv.encode(csvHeaders,rows)
+        local filename='exports/seats_'..GetPlayerRoutingBucket(src)..'.csv'
+        if SaveResourceFile then assert(SaveResourceFile(GetCurrentResourceName(),filename,text,-1),'CSVを書き出せませんでした。') end
+        return {ok=true,text=text,filename=filename}
+    end
+    if action~='import' then return fail('操作が不正です。') end
+    if busy.__create then return fail('保存中です。') end
+    local ok,result=pcall(function()
+        local rows=OmniteCsv.decode(input,csvHeaders)
+        local prepared,ids,queries={}, {}, {}
+        assert(#rows>0,'CSVにデータがありません。')
+        local total,owned=0,0 for _,seat in pairs(S.placed) do total=total+1 if seat.owner==owner then owned=owned+1 end end
+        for _,r in ipairs(rows) do
+            assert(r.id:match('^[1-9]%d*$') and tonumber(r.id)<9007199254740991 and not ids[r.id],'IDが不正または重複しています。')
+            ids[r.id]=true
+            local old=S.placed[r.id]
+            assert(not busy[r.id],'他の操作で保存中です。')
+            assert(tonumber(r.bucket)==GetPlayerRoutingBucket(src),'現在のバケットと違います。')
+            assert(not old or (old.bucket==tonumber(r.bucket) and permitted(src,old,owner,'save')),'更新権限がありません。')
+            local seat=normalize({mlo=r.mlo,name=r.name,kind=r.kind,coords={x=tonumber(r.x),y=tonumber(r.y),z=tonumber(r.z)},
+                heading=tonumber(r.heading),style=r.style,group=r.group~='' and r.group or nil})
+            assert(seat,'椅子・ベッドの設定値が不正です。')
+            assert(seat.kind~='patient_bed' or (isEms(src) and GetResourceState(Config.Placement.medicalResource)=='started'),'病院ベッドの登録はEMS限定です。')
+            assert(not S.positionOccupied(seat.coords,tonumber(r.bucket)),'使用中の地点は変更できません。')
+            if old then assert(not S.positionOccupied(old.coords,old.bucket),'使用中の地点は変更できません。') else total=total+1 owned=owned+1 end
+            assert(owned<=Config.Placement.maxPerOwner,'所有者ごとの登録上限です。')
+            assert(total<=Config.Placement.maxTotal,'登録上限です。')
+            seat.id,seat.owner,seat.bucket,seat.revision=r.id,old and old.owner or owner,tonumber(r.bucket),old and old.revision+1 or 1
+            seat.group=seat.group or ('furniture_'..r.id)
+            prepared[#prepared+1]=seat
+            queries[#queries+1]={query='INSERT IGNORE INTO ptech_omnite_seating_mlos (id,label,owner) VALUES (?,?,?)',values={seat.mlo,seat.mlo,owner}}
+            queries[#queries+1]={query='INSERT INTO ptech_omnite_seating (id,owner,mlo,name,kind,payload,bucket,revision) VALUES (?,?,?,?,?,?,?,?) ON DUPLICATE KEY UPDATE mlo=VALUES(mlo),name=VALUES(name),kind=VALUES(kind),payload=VALUES(payload),revision=revision+1',
+                values={seat.id,seat.owner,seat.mlo,seat.name,seat.kind,json.encode(seat),seat.bucket,seat.revision}}
+        end
+        local groups={}
+        local combined={} for id,seat in pairs(S.placed) do if not ids[id] then combined[#combined+1]=seat end end
+        for _,seat in ipairs(prepared) do combined[#combined+1]=seat end
+        for _,seat in ipairs(combined) do
+            local group=groups[seat.group]
+            if group then
+                assert(group.first.mlo==seat.mlo and group.first.bucket==seat.bucket,'家具グループのMLO・バケットが違います。')
+                assert(#(vec3(group.first.coords.x,group.first.coords.y,group.first.coords.z)-vec3(seat.coords.x,seat.coords.y,seat.coords.z))<=Config.Placement.groupDistance,'家具グループの地点が離れすぎています。')
+                group.count=group.count+1 assert(group.count<=Config.Placement.maxPerGroup,'家具グループの上限です。')
+            else groups[seat.group]={first=seat,count=1} end
+        end
+        busy.__create=true
+        for _,seat in ipairs(prepared) do
+            local points={seat.coords}
+            local old=S.placed[seat.id] if old then points[#points+1]=old.coords end
+            busy[seat.id]={bucket=seat.bucket,points=points}
+        end
+        local executed,committed=pcall(MySQL.transaction.await,queries)
+        busy.__create=nil for id in pairs(ids) do busy[id]=nil end
+        assert(executed and committed,'CSVのDB保存に失敗しました。変更は反映していません。')
+        for _,seat in ipairs(prepared) do S.placed[seat.id]=seat if not mlos[seat.mlo] then mlos[seat.mlo]={label=seat.mlo,owner=owner} end end
+        publish()
+        return {ok=true,count=#prepared}
+    end)
+    return ok and result or fail(tostring(result))
+end)

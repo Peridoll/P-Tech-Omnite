@@ -37,7 +37,7 @@ function runToolboxSpecs()
     use(data)
     assert(uses==1 and shown==1 and checks==1,'successful inventory use opens menu after auth')
     assert(contexts.omnite_seat_tool.title=='Omini工具箱')
-    assert(#contexts.omnite_seat_tool.options==2 and contexts.omnite_seat_tool.options[1].title=='椅子やベッドの管理' and contexts.omnite_seat_tool.options[2].title=='テレポーターの管理','toolbox exposes seating and teleporter management')
+    assert(#contexts.omnite_seat_tool.options==1 and contexts.omnite_seat_tool.options[1].title=='椅子 & ベッド 管理','ordinary tool holder only sees furniture management')
     useResult=false
     use(data)
     assert(shown==1 and checks==1,'cancelled inventory use never opens menu')
@@ -58,10 +58,14 @@ function runToolboxSpecs()
     SeatingClient.placing=false
     useResult=true admin=true
     use(data)
-    assert(#contexts.omnite_seat_tool.options==4, 'admin toolbox exposes circle settings and config export without garages')
-    assert(contexts.omnite_seat_tool.options[3].title=='サークルエリアの管理', 'circle management is visible to admins')
+    assert(#contexts.omnite_seat_tool.options==5, 'admin toolbox exposes five management modules')
+    assert(contexts.omnite_seat_tool.options[3].title=='サークルエリア管理', 'circle management is visible to admins')
+    local shopsOpened=0
+    SeatingClient.openShops=function() shopsOpened=shopsOpened+1 end
+    contexts.omnite_seat_tool.options[4].onSelect()
+    assert(shopsOpened==1,'shop management opens inside toolbox without another resource')
     deliveryState='started'
     use(data)
     assert(#contexts.omnite_seat_tool.options==5,'running delivery exposes admin manager')
-    assert(contexts.omnite_seat_tool.options[3].icon=='truck-fast','delivery menu is linked')
+    assert(contexts.omnite_seat_tool.options[5].icon=='truck-fast','delivery menu is linked')
 end

@@ -3,6 +3,7 @@ local prefix='ptech_omnite_toolbox:circle:'
 local points,blips,warnings={},{},{}
 local manager,accessing,loggedOut=nil,false,false
 local previewBlip, hintText
+local appearanceEditing=false
 local function hint(text)
     if text==hintText then return end
     if text then lib.showTextUI(text,{position='bottom-center'})
@@ -66,7 +67,7 @@ local function update(state,newBucket)
                     distance=Config.Circles.interactDistance,
                     canInteract=function()
                         local point=points[pointId]
-                        return not loggedOut and point~=nil and not manager and not accessing
+                        return not loggedOut and not appearanceEditing and point~=nil and not manager and not accessing
                             and not C.busy() and not C.placing and not C.managing and C.canStart()
                     end,
                     onSelect=function()
@@ -225,6 +226,61 @@ RegisterNetEvent(prefix..'travel',function(d)
     C.teleporting=false
     if not ok then print('[Toolbox] Circle travel: '..tostring(err)) end
 end)
+local appearancePendingUntil=0
+local function appearanceCircle(c)
+    for id,p in pairs(points) do
+        if p.enabled and (c.x-p.center.x)^2+(c.y-p.center.y)^2<=p.radius^2 then return id end
+    end
+end
+local function canCustomize()
+    return not loggedOut and not appearanceEditing and not manager and not accessing and not C.busy() and not C.placing
+        and not C.managing and C.canStart() and not IsNuiFocused() and GetGameTimer()>=appearancePendingUntil
+end
+local function openAppearance(id,faceCodes)
+    if not canCustomize() then return end
+    appearancePendingUntil=GetGameTimer()+2000
+    if GetResourceState('illenium-appearance')~='started' then
+        C.notify('illenium-appearance が起動していません。') return
+    end
+    local result=call('appearance',id)
+    local p=points[id]
+    local c=GetEntityCoords(PlayerPedId())
+    if not result then return end
+    if loggedOut or not p or not p.enabled or IsNuiFocused()
+        or (c.x-p.center.x)^2+(c.y-p.center.y)^2>p.radius^2 or not C.canStart() then
+        C.notify('初期キャラ設定を開ける状態ではありません。サークル内で立って操作してください。')
+        return
+    end
+    hint(nil)
+    if faceCodes then
+        lib.registerContext({id='omnite_circle_face_codes',title='整形',options={
+            {title='顔コードを発行',event='illenium-appearance:client:generateFaceCode'},
+            {title='顔コードを読み込み',event='illenium-appearance:client:importFaceCode'},
+        }})
+        lib.showContext('omnite_circle_face_codes')
+    else
+        appearanceEditing=true
+        local ok,err=pcall(function()
+            exports['illenium-appearance']:startPlayerCustomization(function(appearance)
+                appearanceEditing=false
+                if appearance and not loggedOut then
+                    TriggerServerEvent('illenium-appearance:server:saveAppearance',appearance)
+                end
+            end,{
+                ped=true,headBlend=true,faceFeatures=true,headOverlays=true,components=true,props=true,
+                componentConfig={masks=true,upperBody=true,lowerBody=true,bags=true,shoes=true,
+                    scarfAndChains=true,bodyArmor=true,shirts=true,decals=true,jackets=true},
+                propConfig={hats=true,glasses=true,ear=true,watches=true,bracelets=true},
+                tattoos=false,enableExit=true,hasTracker=false,automaticFade=true,
+            })
+        end)
+        if not ok then
+            appearanceEditing=false
+            print('[Toolbox] Character customization: '..tostring(err))
+            C.notify('初期キャラ設定を開けませんでした。F8ログを確認してください。')
+        end
+    end
+end
 local function warningLines()
     local lines={}
     for _,w in pairs(warnings) do
@@ -246,6 +302,7 @@ CreateThread(function()
                     DrawMarker(1,p.center.x,p.center.y,p.center.z-0.95,0,0,0,0,0,0,0.8,0.8,0.15,255,100,100,160,false,false,2,false,nil,nil,false)
                 end
             end
+            local appearanceId=appearanceCircle(c)
             local m=manager
             if m and m.capture then
                 wait=0
@@ -271,6 +328,16 @@ CreateThread(function()
                     end)
                 end
 
+            elseif appearanceId and canCustomize() then
+                wait=0
+                hints[#hints+1]='[E] 初期キャラ設定を開く / [G] 顔コード'
+                DisableControlAction(0,38,true)
+                DisableControlAction(0,47,true)
+                if IsDisabledControlJustPressed(0,38) then
+                    CreateThread(function() openAppearance(appearanceId) end)
+                elseif IsDisabledControlJustPressed(0,47) then
+                    CreateThread(function() openAppearance(appearanceId,true) end)
+                end
             end
         end
         hint(#hints>0 and table.concat(hints,'  \n') or nil)
@@ -286,6 +353,7 @@ CreateThread(load)
 AddEventHandler('QBCore:Client:OnPlayerLoaded',load)
 AddEventHandler('QBCore:Client:OnPlayerUnload',function()
     loggedOut=true
+    appearanceEditing=false
     if travellingPed then FreezeEntityPosition(travellingPed,false) travellingPed=nil DoScreenFadeIn(0) end
     lib.hideContext(false) lib.closeInputDialog()
     finish() removeBlips() removeTargets()

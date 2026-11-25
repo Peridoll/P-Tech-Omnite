@@ -7,6 +7,8 @@ local tools={[1]=true,[2]=false}
 local metadata,states,seated,vehicles={},{},{},{}
 local prefix='ptech_omnite_toolbox:teleport:'
 function vec3(x,y,z) return {x=x,y=y,z=z} end
+local admins={[1]=true}
+function IsPlayerAceAllowed(src) return admins[src]==true end
 function GetGameTimer() return now end
 function GetPlayerPed(src) return positions[src] and src or 0 end
 function GetEntityCoords(ped) return positions[ped] end
@@ -85,8 +87,10 @@ function runTeleportSpecs()
     assert(used.ok and used.destination.x==100 and used.destination.heading==123,'ordinary players without tool use trusted destination')
     assert(not invoke(2,'use',id,'a',1).ok,'cooldown prevents repeated travel')
     tools[2]=true
+    assert(not invoke(2,'begin',id,1).ok,'ordinary tool holder cannot edit teleporters')
+    admins[2]=true
     local edit=invoke(2,'begin',id,1)
-    assert(edit.ok and edit.a.x==0 and edit.b.x==100,'other tool holder can edit saved endpoints')
+    assert(edit.ok and edit.a.x==0 and edit.b.x==100,'other admin can edit saved endpoints')
     assert(invoke(2,'save',edit.token,'双方向','both').ok)
     assert(not invoke(1,'use',id,'b',1).ok,'stale revision rejected')
     now=now+3000
@@ -108,4 +112,19 @@ function runTeleportSpecs()
     local expired=invoke(1,'begin')
     now=now+Config.Teleporters.draftLifetime+1
     assert(not invoke(1,'capture',expired.token,'a').ok,'expired drafts rejected')
+end
+
+function runTeleportCsvSpecs()
+    local headers={'id','name','mode','ax','ay','az','ah','bx','by','bz','bh','bucket'}
+    local row={id='900',name='日本語,テレポート',mode='both',ax=0,ay=0,az=10,ah=0,bx=10,by=0,bz=10,bh=180,bucket=0}
+    MySQL.transaction={await=function() return true end}
+    assert(invoke(1,'csv','import',OmniteCsv.encode(headers,{row})).ok,'teleporter CSV inserts new ID')
+    row.mode='a_to_b'
+    assert(invoke(1,'csv','import',OmniteCsv.encode(headers,{row})).ok,'teleporter CSV updates existing ID')
+    local result=invoke(1,'csv','export')
+    assert(result.ok and OmniteCsv.decode(result.text,headers)[1].mode=='a_to_b','teleporter CSV exports updated direction')
+    admins[2]=false
+    assert(not invoke(2,'csv','export').ok,'teleporter CSV is admin only')
+    row.bx=0
+    assert(not invoke(1,'csv','import',OmniteCsv.encode(headers,{row})).ok,'overlapping teleport endpoints rejected')
 end

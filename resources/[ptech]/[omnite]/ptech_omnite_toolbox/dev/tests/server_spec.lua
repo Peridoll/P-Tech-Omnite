@@ -205,3 +205,27 @@ function runSpecs()
     assert(exported.usePlacementTool('usingItem',{}, {id=1}) == false,'inventory use rechecks possession')
     assert(#sent==before+1,'rejected inventory use gives feedback')
 end
+
+function runCsvSpecs()
+    tools[1]=true admins[1]=true ems[1]=true
+    local exported=invoke(1,'csv','export') assert(exported.ok)
+    local headers={'id','mlo','name','kind','x','y','z','heading','style','group','bucket'}
+    local rows=OmniteCsv.decode(exported.text,headers) assert(#rows>0)
+    local multiline=OmniteCsv.encode({'value'},{{value='quoted, "text"\nline'}})
+    assert(OmniteCsv.decode(multiline,{'value'})[1].value=='quoted, "text"\nline','parser preserves quoted newlines')
+    local id=rows[1].id
+    rows[1].name='日本語, "引用"'
+    local committed=false
+    MySQL.transaction={await=function(queries) assert(#queries>=2) return committed end}
+    local text=OmniteCsv.encode(headers,{rows[1]})
+    local previous=SeatingServer.placed[id].name
+    assert(not invoke(1,'csv','import',text).ok and SeatingServer.placed[id].name==previous,'failed transaction leaves runtime untouched')
+    committed=true
+    assert(invoke(1,'csv','import',text).ok and SeatingServer.placed[id].name==rows[1].name,'CSV updates existing ID, including quoted Unicode')
+    rows[1].id='99999' rows[1].group=''
+    assert(invoke(1,'csv','import',OmniteCsv.encode(headers,{rows[1]})).ok and SeatingServer.placed['99999'],'CSV inserts new ID')
+    local duplicate=OmniteCsv.encode(headers,{rows[1],rows[1]})
+    assert(not invoke(1,'csv','import',duplicate).ok,'duplicate IDs rejected before transaction')
+    local ok=pcall(OmniteCsv.decode,'id,wrong\n1,2',headers) assert(not ok,'bad header rejected')
+    assert(not invoke(1,'csv','import','id,"unclosed').ok,'unclosed CSV quote rejected')
+end

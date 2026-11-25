@@ -41,7 +41,7 @@ lib={showTextUI=function() end,hideTextUI=function() end,
     alertDialog=function() return 'confirm' end,
     callback={await=function(name,_,...)
         local args={...}
-        if name=='ptech_omnite_seating:tool' then return {ok=true} end
+        if name=='ptech_omnite_seating:tool' then return {ok=true,admin=true} end
         local action=name:sub(#prefix+1)
         if action=='list' then return {ok=true,points=points,bucket=0} end
         if action=='begin' then return {ok=true,token=55,name='',mode='both'} end

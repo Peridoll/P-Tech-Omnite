@@ -430,32 +430,26 @@ local function managementAction(existing)
     showRegistration({coords={x=coords.x,y=coords.y,z=coords.z},heading=GetEntityHeading(ped),kind='chair'})
 end
 
+C.openSeatManagement=beginManagement
+
 local function openTool()
     if opening or C.busy() or C.placing or management then return end
     opening=true
     local auth=call('tool')
     opening=false
     if not auth then return end
-    local options={{title='椅子やベッドの管理',description='管理モードに入り、近くの登録地点を表示します',onSelect=beginManagement}}
-    options[#options+1]={title='テレポーターの管理',description='2点を指定し、一方通行・双方向の移動を登録します',onSelect=function()
-        if C.openTeleporters then C.openTeleporters() end
-    end}
-    if auth.admin and GetResourceState('ptech_omnite_delivery')=='started' then
-        options[#options+1]={title='配達・素材仕入れの管理',icon='truck-fast',onSelect=function()
+    local options={{title='椅子 & ベッド 管理',icon='chair',onSelect=function() C.openDataMenu('seats') end}}
+    if auth.admin then
+        options[#options+1]={title='テレポーター管理',icon='door-open',onSelect=function() C.openDataMenu('teleport') end}
+        options[#options+1]={title='サークルエリア管理',icon='circle',onSelect=function() if C.openCircles then C.openCircles() end end}
+        options[#options+1]={title='ショップ管理',icon='store',onSelect=function()
+            if C.openShops then C.openShops() end
+        end}
+        options[#options+1]={title='デリバリー管理',icon='truck-fast',onSelect=function()
+            if GetResourceState('ptech_omnite_delivery')~='started' then C.notify('ptech_omnite_delivery を起動してください。') return end
             exports.ptech_omnite_delivery:openManager()
         end}
     end
-    if auth.admin then options[#options+1]={title='サークルエリアの管理',onSelect=function()
-        if C.openCircles then C.openCircles() end
-    end} end
-    if auth.admin then options[#options+1]={title='DBからConfigへ出力',onSelect=function()
-        local choices={{value='__all',label='すべて'}}
-        for _,entry in ipairs(auth.mlos or {}) do choices[#choices+1]={value=entry.id,label=entry.label} end
-        local input=lib.inputDialog('Config出力',{{type='select',label='MLO',options=choices,default='__all',required=true}})
-        if not input then return end
-        local result=call('export',input[1]~='__all' and input[1] or nil)
-        if result then C.copy(result.text) end
-    end} end
     lib.registerContext({id='omnite_seat_tool',title='Omini工具箱',options=options})
     lib.showContext('omnite_seat_tool')
 end

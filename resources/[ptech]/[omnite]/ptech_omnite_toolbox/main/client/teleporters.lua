@@ -100,7 +100,7 @@ function C.openTeleporters()
     if manager or C.busy() or C.placing or C.managing or not C.canStart() then return end
     -- 工具箱所持を再確認する。保存・座標採取・削除もサーバーで再確認する。
     local ok,auth=pcall(lib.callback.await,'ptech_omnite_seating:tool',false)
-    if not ok or not auth or not auth.ok then C.notify('工具箱を所持した状態で開いてください。') return end
+    if not ok or not auth or not auth.ok or not auth.admin then C.notify('工具箱を所持した状態で開いてください。') return end
     if manager or C.busy() or C.placing or C.managing then return end
     manager={mode='list'} C.teleportManaging=true
     showList()

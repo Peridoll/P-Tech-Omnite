@@ -1,6 +1,9 @@
 local threads, events, exportsList, contexts = {}, {}, {}, {}
 local markers, routes, targets, deleted = {}, {}, {}, {}
 local state, callbackResult, selected, clipboard
+local openedInventory, dialog
+local handoverResult=true
+DeliveryGameplay={update=function() end,stop=function() end,handover=function() return handoverResult end}
 local position={x=0,y=0,z=0}
 local role={name='diner',isboss=false,onduty=true}
 local vectorMt={__sub=function(a,b) return setmetatable({x=a.x-b.x,y=a.y-b.y,z=a.z-b.z},getmetatable(a)) end,
@@ -42,10 +45,11 @@ lib={
     showContext=function(id) selected=id end,
     getOpenContextMenu=function() return selected end,
     hideContext=function() selected=nil end,
-    inputDialog=function() return nil end,
+    inputDialog=function(title,fields) dialog={title=title,fields=fields} return nil end,
     setClipboard=function(text) clipboard=text end,
 }
 exports=setmetatable({
+    ox_inventory={openInventory=function(_,kind,data) openedInventory={kind=kind,data=data} return true end},
     qbx_core={GetPlayerData=function() return {job=role} end},
     ox_target={
         addLocalEntity=function(_,ped,options) targets[options[1].name]=options[1] end,
@@ -55,19 +59,19 @@ exports=setmetatable({
 function runClientSpecs()
     local prefix='ptech_omnite_delivery:'
     local points={shop={id='shop',kind='shop',label='Diner',job='diner',reward=100,points=1,coords={x=0,y=0,z=0},heading=0},
-        pickup={id='pickup',kind='pickup',label='Pickup',coords={x=10,y=0,z=0},heading=0},
-        market={id='market',kind='market',label='Market',coords={x=20,y=0,z=0},heading=0}}
+        pickup={id='pickup',kind='pickup',label='Pickup',coords={x=10,y=0,z=0},heading=0}
+}
     for _,point in pairs(points) do point.bucket=0 end
     state={ok=true,locations=points,manager=true}
     events['QBCore:Client:OnPlayerLoaded']()
     local loop=coroutine.create(threads[1])
     assert(coroutine.resume(loop))
     for i=3,#threads do threads[i]() end
-    local shop, pickup, market=targets[prefix..'shop'], targets[prefix..'pickup'], targets[prefix..'market']
-    assert(shop and pickup and market,'nearby NPC targets are registered')
-    assert(shop.canInteract() and not pickup.canInteract() and not market.canInteract())
+    local shop,pickup=targets[prefix..'shop'],targets[prefix..'pickup']
+    assert(shop and pickup,'store and destination NPC targets registered')
+    assert(shop.canInteract() and not pickup.canInteract())
     role.name='other' assert(not shop.canInteract()) role.name='diner'
-    role.isboss=true assert(market.canInteract()) role.isboss=false
+    role.onduty=false assert(shop.canInteract(),'off-duty employees can interact')
     callbackResult={ok=true,points=5}
     shop.onSelect()
     assert(selected=='omnite_delivery_shop')
@@ -78,6 +82,11 @@ function runClientSpecs()
     assert(pickup.canInteract(),'only assigned pickup is usable')
     m={shop='shop',pickup='pickup',picked=true,expires=os.time()+100}
     callbackResult={ok=true,mission=m}
+    handoverResult=false
+    local prior=#markers
+    pickup.onSelect()
+    assert(#markers==prior and pickup.canInteract(),'cancelled handover leaves mission unchanged')
+    handoverResult=true
     pickup.onSelect()
     assert(markers[#markers].x==0 and markers[#markers-1].removed,'pickup switches route to store')
     assert(not pickup.canInteract(),'collected box cannot be picked twice')
@@ -88,9 +97,18 @@ function runClientSpecs()
     contexts.omnite_delivery_shop.options[2].onSelect()
     assert(markers[#markers].removed,'completion clears route')
     exportsList.openManager()
-    assert(selected=='omnite_delivery_manager' and #contexts.omnite_delivery_manager.options==5)
+    assert(selected=='omnite_delivery_manager' and #contexts.omnite_delivery_manager.options==7)
+    local options=contexts.omnite_delivery_manager.options
+    options[1].onSelect() assert(#dialog.fields==4 and dialog.title:find('配達先NPC'),'destination includes NPC model')
+    options[2].onSelect() assert(#dialog.fields==7 and dialog.fields[4].required and dialog.title:find('店舗NPC'),'store includes job, rewards and model')
+    callbackResult={ok=true,products={{id='normal',item='pomnite_food_supply',label='Food',cash=9000,points=2}},revision=2,
+        items={{value='pomnite_food_supply',label='Food'}}}
+    contexts.omnite_delivery_manager.options[3].onSelect()
+    assert(selected=='omnite_delivery_product_manager','toolbox manager opens product settings')
+    contexts.omnite_delivery_product_manager.options[1].onSelect()
+    assert(#dialog.fields==4 and dialog.fields[2].searchable,'product editor selects installed items and prices')
     callbackResult={ok=true,locations={points.shop}}
-    contexts.omnite_delivery_manager.options[2].onSelect()
+    contexts.omnite_delivery_manager.options[5].onSelect()
     assert(clipboard:find('Config.locations') and clipboard:find('job="diner"'),'config export includes job')
     events[prefix..'locations']({})
     assert(deleted[42],'removed locations clean up NPC entities')

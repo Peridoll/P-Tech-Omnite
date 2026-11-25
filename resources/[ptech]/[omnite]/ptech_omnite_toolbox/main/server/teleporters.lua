@@ -11,6 +11,9 @@ end
 local function authorize(src)
     local p=player(src)
     if not ready then return nil,fail('テレポーターDBの準備ができていません。') end
+    if not (IsPlayerAceAllowed(src,Config.Placement.adminAce) or IsPlayerAceAllowed(src,'admin') or IsPlayerAceAllowed(src,'god')) then
+        return nil,fail('管理者のみ操作できます。')
+    end
     if not p or (exports.ox_inventory:GetItemCount(src,Config.Placement.item) or 0)<1 then
         return nil,fail('工具箱を所持していません。')
     end
@@ -186,4 +189,49 @@ RegisterNetEvent(prefix..'cancel',function(token)
 end)
 AddEventHandler('playerDropped',function()
     drafts[source],requests[source],uses[source]=nil,nil,nil
+end)
+
+local csvHeaders={'id','name','mode','ax','ay','az','ah','bx','by','bz','bh','bucket'}
+lib.callback.register(prefix..'csv',function(src,action,input)
+    local owner,err=authorize(src) if not owner then return err end
+    if action=='export' then
+        local rows={}
+        for id,p in pairs(points) do if p.bucket==GetPlayerRoutingBucket(src) then
+            rows[#rows+1]={id=id,name=p.name,mode=p.mode,ax=p.a.x,ay=p.a.y,az=p.a.z,ah=p.a.heading,
+                bx=p.b.x,by=p.b.y,bz=p.b.z,bh=p.b.heading,bucket=p.bucket}
+        end end
+        table.sort(rows,function(a,b) return tonumber(a.id)<tonumber(b.id) end)
+        local text=OmniteCsv.encode(csvHeaders,rows)
+        local filename='exports/teleport_'..GetPlayerRoutingBucket(src)..'.csv'
+        if SaveResourceFile then assert(SaveResourceFile(GetCurrentResourceName(),filename,text,-1),'CSVを書き出せませんでした。') end
+        return {ok=true,text=text,filename=filename}
+    end
+    if action~='import' then return fail('操作が不正です。') end
+    for _ in pairs(locks) do return fail('保存中です。') end
+    for src,draft in pairs(drafts) do if draft.expires<GetGameTimer() then drafts[src]=nil else return fail('編集中のテレポーターがあります。編集を閉じてください。') end end
+    local ok,result=pcall(function()
+        local rows=OmniteCsv.decode(input,csvHeaders)
+        assert(#rows>0,'CSVにデータがありません。')
+        local prepared,ids,queries={},{},{}
+        local total=0 for _ in pairs(points) do total=total+1 end
+        for _,r in ipairs(rows) do
+            assert(r.id:match('^[1-9]%d*$') and tonumber(r.id)<9007199254740991 and not ids[r.id],'IDが不正または重複しています。') ids[r.id]=true
+            local old=points[r.id]
+            assert(tonumber(r.bucket)==GetPlayerRoutingBucket(src) and (not old or old.bucket==tonumber(r.bucket)),'現在のバケットと違います。')
+            local p={id=r.id,name=r.name,mode=r.mode,a={x=tonumber(r.ax),y=tonumber(r.ay),z=tonumber(r.az),heading=tonumber(r.ah)},
+                b={x=tonumber(r.bx),y=tonumber(r.by),z=tonumber(r.bz),heading=tonumber(r.bh)},bucket=tonumber(r.bucket),owner=old and old.owner or owner,revision=old and old.revision+1 or 1}
+            assert(label(p.name) and mode(p.mode) and endpoint(p.a) and endpoint(p.b),'設定値が不正です。')
+            assert((p.a.x-p.b.x)^2+(p.a.y-p.b.y)^2+(p.a.z-p.b.z)^2>=1,'A・Bは1m以上離してください。')
+            if not old then total=total+1 end assert(total<=Config.Teleporters.maxTotal,'登録上限です。')
+            prepared[#prepared+1]=p
+            queries[#queries+1]={query='INSERT INTO ptech_omnite_teleporters (id,owner,payload,bucket,revision) VALUES (?,?,?,?,?) ON DUPLICATE KEY UPDATE payload=VALUES(payload),revision=revision+1',values={p.id,p.owner,json.encode(p),p.bucket,p.revision}}
+        end
+        for id in pairs(ids) do locks[id]=true end locks.__create=true
+        local executed,committed=pcall(MySQL.transaction.await,queries)
+        for id in pairs(ids) do locks[id]=nil end locks.__create=nil
+        assert(executed and committed,'CSVのDB保存に失敗しました。')
+        for _,p in ipairs(prepared) do points[p.id]=p end publish()
+        return {ok=true,count=#prepared}
+    end)
+    return ok and result or fail(tostring(result))
 end)
