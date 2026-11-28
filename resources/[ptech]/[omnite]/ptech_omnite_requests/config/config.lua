@@ -1,5 +1,10 @@
 Config = {}
 
+-- ゲーム内設置・権限編集は工具箱を所持する管理者のみ。
+Config.Placement = { adminAce='omnite.seating.admin', item='pomnite_toolbox', maxTotal=500, maxDistance=8.0 }
+-- 新規ボードの納品品目。サーバーに導入済みのアイテム名・単価上限を指定します。
+Config.DefaultDeliveryItems = {}
+
 -- 全ボードで共通する設定です。
 Config.InteractionDistance = 2.0
 Config.RequestListLimit = 50
@@ -62,7 +67,7 @@ Config.Boards = {
         coords = vec3(0.0, 0.0, 0.0), -- 対象サーバーの設置座標に置き換える
         size = vec3(1.2, 0.8, 1.5),
         rotation = 0.0,
-        maxAcceptances = 5, -- 受注型依頼で指定できる最大の個別受注枠数
+        maxAcceptances = 1, -- 受注型は1依頼につき1人（サーバー側でも固定）
         maxDeliveryQuantity = 500, -- 納品型依頼で指定できる最大納品数
         deliveryPaymentType = 'cash', -- Qboxの 'cash' または 'bank'
         permissions = {

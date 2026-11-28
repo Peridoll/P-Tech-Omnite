@@ -11,11 +11,14 @@ function GetPlayerPed(src) return players[src] and src or 0 end
 function GetEntityCoords(src) return positions[src] end
 function GetPlayerRoutingBucket(src) return buckets[src] or 0 end
 function GetPlayers() return {} end
-function TriggerClientEvent() end
+local notices={}
+function TriggerClientEvent(name,src,token) notices[name]={src=src,token=token} end
 function AddEventHandler(name,fn) events[name]=fn end
 function CreateThread(fn) tasks[#tasks+1]=fn end
+function Wait() coroutine.yield() end
 function GetCurrentResourceName() return 'ptech_omnite_delivery' end
 local failAdd=false
+local failRefund, failComplete, duringRefund = false,false,nil
 exports={qbx_core={GetPlayer=function(_,src) return players[src] end},ox_inventory={
     GetItemCount=function(_,src,item) if item=='pomnite_toolbox' then return 1 end return items[src][item] or 0 end,
     Items=function(_,name) return name and {label=name} or {pomnite_food_supply={label='Food'}} end,
@@ -50,10 +53,18 @@ function F.reserve(m)
     local a=accounts[m.shop] if a.vault<m.reward then return false end
     a.vault=a.vault-m.reward runs[m.token]={shop=m.shop,pickup=m.pickup,reward=m.reward,points=m.points,owner=m.owner,status='active'} return true
 end
-function F.refund(m) local r=runs[m.token] if r and r.status=='active' then accounts[m.shop].vault=accounts[m.shop].vault+r.reward r.status='refunded' end end
+function F.refund(m)
+    if failRefund then error('temporary refund DB failure') end
+    if duringRefund then local fn=duringRefund duringRefund=nil fn() end
+    local r=runs[m.token]
+    if r and r.status=='active' then accounts[m.shop].vault=accounts[m.shop].vault+r.reward r.status='refunded' end
+end
 function F.beginPay(m) local r=runs[m.token] if r.status~='active' then return false end r.status='paying' return true end
 function F.payFailed(m) runs[m.token].status='active' end
-function F.complete(m) local r=runs[m.token] if r.status=='paying' then accounts[m.shop].points=accounts[m.shop].points+r.points r.status='paid' end end
+function F.complete(m)
+    if failComplete then error('temporary settlement DB failure') end
+    local r=runs[m.token] if r.status=='paying' then accounts[m.shop].points=accounts[m.shop].points+r.points r.status='paid' end
+end
 function F.buy(id,cost) local a=accounts[id] if a.points<cost then return false end a.points=a.points-cost return true end
 function F.refundPoints(id,cost) accounts[id].points=accounts[id].points+cost end
 function F.wallet(src,point,action,amount)
@@ -80,6 +91,7 @@ function runSpecs()
     assert(not invoke(3,'work','start','a').ok,'other job cannot accept')
     assert(not invoke(2,'work','start','a').ok,'empty vault prevents acceptance')
     assert(not invoke(2,'vault','a','deposit',100).ok,'ordinary employee cannot deposit')
+    assert(not invoke(2,'vault','a','reward',1).ok,'ordinary employee cannot set delivery pay')
     assert(invoke(1,'vault','a','deposit',800000).ok)
     local astate=invoke(1,'shop','a') assert(astate.vault==800000,tostring(astate.vault)..' '..tostring(astate.message))
     local first=invoke(2,'work','start','a').mission
@@ -101,6 +113,9 @@ function runSpecs()
     assert(second.reward==100000,'accepted reward stays fixed after boss changes price')
     assert(invoke(2,'work','cancel','a').ok and accounts.a.vault==400000,'cancel refunds original reservation')
     F.refund(second) assert(accounts.a.vault==400000,'repeat refund is idempotent')
+    local edited=point('a','shop') edited.reward=1
+    assert(invoke(1,'manage','save',edited).ok)
+    assert(invoke(1,'shop','a').reward==200000,'admin placement cannot overwrite the boss reward')
     clock=clock+61
     local third=invoke(2,'work','start','a').mission
     source=2 events.playerDropped() tasks[#tasks]()
@@ -108,12 +123,63 @@ function runSpecs()
     clock=clock+61
     local fourth=invoke(2,'work','start','a').mission
     clock=clock+Config.missionSeconds+1
+    duringRefund=function()
+        assert(not invoke(2,'work','start','a').ok,'state refund locks accepting a new mission')
+        assert(not invoke(1,'vault','a','withdraw',1).ok,'state refund holds the store lock')
+    end
     invoke(2,'state') assert(accounts.a.vault==400000 and runs[fourth.token].status=='refunded','expiration refunds escrow')
+    clock=clock+61
+    local fifth=invoke(2,'work','start','a').mission
+    clock=clock+Config.missionSeconds+1
+    failRefund=true
+    local sweep=coroutine.create(tasks[1])
+    assert(coroutine.resume(sweep))
+    assert(coroutine.resume(sweep))
+    assert(runs[fifth.token].status=='active' and coroutine.status(sweep)=='suspended','temporary DB error does not kill expiration worker')
+    failRefund=false
+    assert(coroutine.resume(sweep))
+    assert(runs[fifth.token].status=='refunded' and accounts.a.vault==400000,'next sweep retries refund without double credit')
+    clock=clock+61
+    local sixth=invoke(2,'work','start','a').mission
+    positions[2].x=10 assert(invoke(2,'work','pickup','destination').ok)
+    positions[2].x=0
+    local beforeMoney,beforePoints=items[2].money,accounts.a.points
+    failComplete=true
+    assert(not invoke(2,'work','deliver','a').ok)
+    assert(items[2].money==beforeMoney+sixth.reward and accounts.a.points==beforePoints,'failed DB finalization preserves one cash payout')
+    failComplete=false
+    assert(invoke(2,'state').ok)
+    assert(runs[sixth.token].status=='paid' and accounts.a.points==beforePoints+600)
+    assert(items[2].money==beforeMoney+sixth.reward,'settlement retry does not pay twice')
+    assert(notices['ptech_omnite_delivery:missionEnded'].token==sixth.token,'successful retry clears client guide and route')
     local data=invoke(1,'manage','products')
     assert(invoke(1,'manage','saveProduct',{revision=data.revision,product={id='normal',item='pomnite_food_supply',label='Food',points=7}}).ok)
     assert(not invoke(1,'manage','saveProduct',{revision=data.revision,product={id='normal',item='pomnite_food_supply',label='Food',points=1}}).ok,'stale catalog updates rejected')
     assert(invoke(2,'shop','a').products[1].points==7,'employees see current exchange rates')
+    local visible=point('visible','pickup',20) visible.visibility='always'
+    assert(invoke(1,'manage','save',visible).ok)
+    assert(invoke(1,'state').locations.visible.visibility=='always','saved NPC visibility is sent to clients')
+    visible.visibility='invalid'
+    assert(not invoke(1,'manage','save',visible).ok,'unsupported visibility modes are rejected')
+    visible.visibility='mission'
+    assert(invoke(1,'manage','save',visible).ok)
+    assert(invoke(1,'state').locations.visible.visibility=='mission','visibility can be changed on existing NPC')
+end
+local expectedMigrationRevision
+function seedRetiredProduct()
+    local list=json.decode(catalogRow.payload)
+    list[#list+1]={id='old_adult',item='pomnite_adult_supply',label='Adult',points=5}
+    list[#list+1]={id='custom',item='custom_ingredient',label='Custom',points=11}
+    catalogRow.payload=json.encode(list)
+    expectedMigrationRevision=catalogRow.revision+1
 end
 function verifyCatalogReload()
     local data=invoke(1,'manage','products') assert(data.ok and data.products[1].points==7,'catalog restored on reload')
+    local custom=false
+    for _,p in ipairs(data.products) do
+        assert(p.item~='pomnite_adult_supply','retired adult material must not return from saved DB')
+        if p.item=='custom_ingredient' then custom=p.points==11 end
+    end
+    assert(custom,'migration preserves custom materials and prices')
+    assert(data.revision==expectedMigrationRevision and catalogRow.revision==expectedMigrationRevision,'retirement persisted once')
 end

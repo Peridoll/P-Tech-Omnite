@@ -21,6 +21,9 @@ for (const file of ['dev/v2_spec.lua','config.lua','main/server.lua']) {
 }
 if (lauxlib.luaL_dostring(state,to_luastring('runSpecs()'))!==lua.LUA_OK) throw new Error(to_jsstring(lua.lua_tostring(state,-1)));
 const reload=fs.readFileSync(path.join(root,'main/server.lua'),'utf8');
+if(lauxlib.luaL_dostring(state,to_luastring('seedRetiredProduct()'))!==lua.LUA_OK) throw new Error(to_jsstring(lua.lua_tostring(state,-1)));
+if(lauxlib.luaL_dostring(state,to_luastring(reload))!==lua.LUA_OK || lauxlib.luaL_dostring(state,to_luastring('verifyCatalogReload()'))!==lua.LUA_OK)
+    throw new Error(to_jsstring(lua.lua_tostring(state,-1)));
 if(lauxlib.luaL_dostring(state,to_luastring(reload))!==lua.LUA_OK || lauxlib.luaL_dostring(state,to_luastring('verifyCatalogReload()'))!==lua.LUA_OK)
     throw new Error(to_jsstring(lua.lua_tostring(state,-1)));
 console.log('PASS: catalog CRUD, stale edits, shop account isolation, database failures and restart restoration');

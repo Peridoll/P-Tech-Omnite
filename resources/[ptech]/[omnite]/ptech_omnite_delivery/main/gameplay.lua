@@ -31,7 +31,7 @@ local function hasBox()
     return false
 end
 local function canCarry(ped)
-    return not stopped and active and active.picked and active.expires > os.time() and not handing
+    return not stopped and active and active.picked and active.expires > GetCloudTimeAsInt() and not handing
         and not IsPedInAnyVehicle(ped,false) and not IsPedDeadOrDying(ped,true)
         and not IsPedRagdoll(ped) and not IsPedCuffed(ped) and hasBox()
 end
@@ -58,12 +58,12 @@ local function carry()
     end
 end
 local function showGuide()
-    if not active or active.expires <= os.time() or not Config.gameplay.showGuide or handing then hideGuide() return end
+    if not active or active.expires <= GetCloudTimeAsInt() or not Config.gameplay.showGuide or handing then hideGuide() return end
     local opened, text = lib.isTextUIOpen()
     if opened and text ~= guide then return end
     local target = points[active.picked and active.shop or active.pickup]
     if not target then hideGuide() return end
-    local remaining = math.max(0,active.expires-os.time())
+    local remaining = math.max(0,active.expires-GetCloudTimeAsInt())
     local step = active.picked and '2/2 店舗NPCへ箱を納品' or '1/2 箱マークのNPCで箱を受取'
     local message = ('配達中 | %s\n行き先：%s | 残り %02d:%02d\n報酬 $%d / 店舗 +%d 箱ポイント')
         :format(step,target.label,remaining//60,remaining%60,active.reward or 0,active.points or 0)

@@ -4,6 +4,19 @@ local points,blips,warnings={},{},{}
 local manager,accessing,loggedOut=nil,false,false
 local previewBlip, hintText
 local appearanceEditing=false
+local managementAdmin=false
+local function kindLabel(p) return p.kind=='npc_repellent' and '人除けサークル' or 'スターターサークル' end
+local function tierLabel(p) return p.tier=='high' and '高級エリア' or '低級エリア' end
+-- 自然発生NPCだけを、発生地点のXY円形判定で生成前に止めます。
+AddEventHandler('populationPedCreating',function(x,y)
+    if loggedOut then return end
+    for _,p in pairs(points) do
+        if p.kind=='npc_repellent' and p.enabled and (x-p.center.x)^2+(y-p.center.y)^2<=p.radius^2 then
+            CancelEvent()
+            return
+        end
+    end
+end)
 local function hint(text)
     if text==hintText then return end
     if text then lib.showTextUI(text,{position='bottom-center'})
@@ -56,7 +69,7 @@ local function update(state,newBucket)
     end
     if manager and manager.bucket~=bucket then lib.hideContext(false) lib.closeInputDialog() finish() end
     for id,p in pairs(points) do
-        if not loggedOut then
+        if not loggedOut and p.kind~='npc_repellent' then
             local pointId=id
             targetZones[id]=exports.ox_target:addBoxZone({
                 -- Captured coordinates are the player's origin, about a metre above the floor.
@@ -68,6 +81,7 @@ local function update(state,newBucket)
                     canInteract=function()
                         local point=points[pointId]
                         return not loggedOut and not appearanceEditing and point~=nil and not manager and not accessing
+                            and (point.kind~='npc_repellent' or managementAdmin)
                             and not C.busy() and not C.placing and not C.managing and C.canStart()
                     end,
                     onSelect=function()
@@ -78,7 +92,7 @@ local function update(state,newBucket)
                 }},
             })
         end
-        if p.enabled and not loggedOut then
+        if p.kind~='npc_repellent' and p.enabled and not loggedOut then
             blips[id]=radiusBlip(p,Config.Circles.blipColour,Config.Circles.blipAlpha)
         end
     end
@@ -101,10 +115,26 @@ showDraft=function()
     previewBlip=radiusBlip(p,5,Config.Circles.blipAlpha)
     local function again() if manager==m then showDraft() end end
     local options={}
-    if p.id then options[#options+1]={title='脱出パスワード',onSelect=function()
+    if p.id and p.kind~='npc_repellent' then options[#options+1]={title='脱出パスワード',onSelect=function()
         escape(p.id)
         if manager==m then finish() end
     end} end
+    if p.kind=='npc_repellent' then
+        options[#options+1]={title='サークルの設定',description=('%s / 半径 %.1fm / %s'):format(p.name,p.radius,tierLabel(p)),onSelect=function()
+            local input=lib.inputDialog('人除けサークルの設定',{
+                {type='input',label='名前',default=p.name,required=true,minLength=1,maxLength=64},
+                {type='number',label='半径（m）',default=p.radius,required=true,min=2,max=Config.Circles.maxRadius},
+                {type='select',label='人除けの種類',default=p.tier or 'low',required=true,options={
+                    {value='low',label='低級エリア：NPCの出現を防ぐ'},
+                    {value='high',label='高級エリア：出現防止＋入ったNPCを車ごと削除'},
+                }},
+                {type='checkbox',label='有効化',checked=p.enabled},
+            })
+            if manager~=m then return end
+            if input then p.name,p.radius,p.tier,p.enabled=input[1],input[2],input[3],input[4]==true end
+            again()
+        end}
+    else
     options[#options+1]={title='サークルの設定',description=('%s / 半径 %.1fm / %d秒'):format(p.name,p.radius,p.delay),onSelect=function()
         local input=lib.inputDialog('サークルの設定',{
             {type='input',label='名前',default=p.name,required=true,minLength=1,maxLength=64},
@@ -117,7 +147,10 @@ showDraft=function()
         if input then p.name,p.radius,p.message,p.delay,p.enabled=input[1],input[2],input[3] or '',input[4],input[5]==true end
         again()
     end}
-    for _,item in ipairs({{key='center',label='編集ポイント・サークル中心'},{key='destination',label='連れ戻し先'}}) do
+    end
+    local locations={{key='center',label='編集ポイント・サークル中心'}}
+    if p.kind~='npc_repellent' then locations[#locations+1]={key='destination',label='連れ戻し先'} end
+    for _,item in ipairs(locations) do
         local key,label=item.key,item.label
         options[#options+1]={title=label..'を指定',description=coordinateText(p[key]),onSelect=function()
             if manager~=m then return end
@@ -138,7 +171,7 @@ showDraft=function()
         if manager~=m then return end
         if answer=='confirm' and call('delete',p.id,p.revision) then finish() else again() end
     end} end
-    lib.registerContext({id='omnite_circle_edit',title='サークルエリアの編集',options=options,onExit=finish})
+    lib.registerContext({id='omnite_circle_edit',title=kindLabel(p)..'の編集',options=options,onExit=finish})
     lib.showContext('omnite_circle_edit')
 end
 showList=function()
@@ -146,22 +179,31 @@ showList=function()
     local result=call('list')
     if manager~=m then return end
     if not result or not result.admin then finish() return end
+    managementAdmin=result.admin==true
     m.bucket=result.bucket
     update(result.points,result.bucket)
-    local options={{title='新しいサークルを設置',onSelect=function()
+    local options={}
+    for _,kind in ipairs({'starter','npc_repellent'}) do
+    local circleKind=kind
+    options[#options+1]={title=kindLabel({kind=circleKind})..'を設置',onSelect=function()
         local result=call('capture')
         if manager~=m then return end
         if not result then showList() return end
-        m.draft={name='サークル',center=result.point,destination=clone(result.point),radius=50.0,delay=10,
+        m.draft={kind=circleKind,name=kindLabel({kind=circleKind}),center=result.point,destination=clone(result.point),radius=50.0,delay=10,
             message='範囲外です。{seconds}秒後に連れ戻されます。',enabled=false}
+        if circleKind=='npc_repellent' then
+            m.draft.tier='low'
+            m.draft.destination,m.draft.delay,m.draft.message=nil,nil,nil
+        end
         showDraft()
-    end}}
+    end}
+    end
     local entries={}
     for _,p in pairs(points) do entries[#entries+1]=p end
     table.sort(entries,function(a,b) return tonumber(a.id)<tonumber(b.id) end)
     for _,p in ipairs(entries) do
         local entry=p
-        options[#options+1]={title=entry.name,description=entry.enabled and '有効' or '無効',onSelect=function()
+        options[#options+1]={title=entry.name,description=kindLabel(entry)..(entry.kind=='npc_repellent' and (' / '..tierLabel(entry)) or '')..' / '..(entry.enabled and '有効' or '無効'),onSelect=function()
             if manager~=m then return end
             m.draft=clone(entry)
             showDraft()
@@ -229,7 +271,7 @@ end)
 local appearancePendingUntil=0
 local function appearanceCircle(c)
     for id,p in pairs(points) do
-        if p.enabled and (c.x-p.center.x)^2+(c.y-p.center.y)^2<=p.radius^2 then return id end
+        if p.kind~='npc_repellent' and p.enabled and (c.x-p.center.x)^2+(c.y-p.center.y)^2<=p.radius^2 then return id end
     end
 end
 local function canCustomize()
@@ -297,7 +339,7 @@ CreateThread(function()
             local c=GetEntityCoords(PlayerPedId())
             for id,p in pairs(points) do
                 local d=#(c-vec3(p.center.x,p.center.y,p.center.z))
-                if d<Config.Circles.markerDistance then
+                if p.kind~='npc_repellent' and d<Config.Circles.markerDistance then
                     wait=0
                     DrawMarker(1,p.center.x,p.center.y,p.center.z-0.95,0,0,0,0,0,0,0.8,0.8,0.15,255,100,100,160,false,false,2,false,nil,nil,false)
                 end
@@ -347,7 +389,7 @@ end)
 local function load()
     loggedOut=false
     local result=call('list')
-    if result and not loggedOut then update(result.points,result.bucket) end
+    if result and not loggedOut then managementAdmin=result.admin==true update(result.points,result.bucket) end
 end
 CreateThread(load)
 AddEventHandler('QBCore:Client:OnPlayerLoaded',load)
@@ -365,4 +407,78 @@ AddEventHandler('onResourceStop',function(resource)
     if travellingPed then FreezeEntityPosition(travellingPed,false) travellingPed=nil C.teleporting=false end
     finish() removeBlips() removeTargets()
     DoScreenFadeIn(0)
+end)
+
+-- 高級エリアだけ、自然発生した歩行者・有人NPC車両を定期的に除去します。
+-- 設置NPC、ミッション車、駐車車両、プレイヤー同乗車には触れません。
+local function ambient(entity)
+    if entity==0 or not DoesEntityExist(entity) or IsEntityAMissionEntity(entity) then return false end
+    local population=GetEntityPopulationType(entity)
+    return population>=1 and population<=5
+end
+local function control(entity)
+    if not NetworkGetEntityIsNetworked(entity) or NetworkHasControlOfEntity(entity) then return true end
+    NetworkRequestControlOfEntity(entity)
+    return NetworkHasControlOfEntity(entity)
+end
+local function inHighArea(entity,areas)
+    local c=GetEntityCoords(entity)
+    for _,p in ipairs(areas) do
+        if (c.x-p.center.x)^2+(c.y-p.center.y)^2<=p.radius^2 then return true end
+    end
+    return false
+end
+local function removeAmbient(entity)
+    SetEntityAsMissionEntity(entity,true,true)
+    DeleteEntity(entity)
+end
+CreateThread(function()
+    while true do
+        local areas={}
+        if not loggedOut then
+            for _,p in pairs(points) do
+                if p.kind=='npc_repellent' and p.enabled and p.tier=='high' then areas[#areas+1]=p end
+            end
+        end
+        if #areas>0 then
+            local visited={}
+            for _,ped in ipairs(GetGamePool('CPed')) do
+                if not IsPedAPlayer(ped) and ambient(ped) and inHighArea(ped,areas) then
+                    local vehicle=GetVehiclePedIsIn(ped,false)
+                    if vehicle==0 then
+                        if control(ped) then removeAmbient(ped) end
+                    elseif not visited[vehicle] then
+                        visited[vehicle]=true
+                        if ambient(vehicle) and inHighArea(vehicle,areas) then
+                            local occupants={}
+                            local safe=true
+                            for seat=-1,GetVehicleMaxNumberOfPassengers(vehicle)-1 do
+                                local occupant=GetPedInVehicleSeat(vehicle,seat)
+                                if occupant~=0 then
+                                    if IsPedAPlayer(occupant) or not ambient(occupant) then safe=false break end
+                                    occupants[#occupants+1]=occupant
+                                end
+                            end
+                            if safe and #occupants>0 then
+                                -- 制御権が揃うまで次回へ回し、乗員だけ消える中途半端な削除を避けます。
+                                safe=control(vehicle)
+                                for _,occupant in ipairs(occupants) do
+                                    if not control(occupant) then safe=false end
+                                end
+                                if safe then
+                                    for _,occupant in ipairs(occupants) do removeAmbient(occupant) end
+                                    local empty=true
+                                    for _,occupant in ipairs(occupants) do
+                                        if DoesEntityExist(occupant) then empty=false break end
+                                    end
+                                    if empty then removeAmbient(vehicle) end
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+        Wait(1000)
+    end
 end)

@@ -2,6 +2,22 @@ local callbackPrefix = 'ptech_omnite_requests:'
 local requestsTable = 'ptech_omnite_requests'
 local acceptancesTable = 'ptech_omnite_requests_acceptances'
 local dbReady = false
+local mutationLocks={}
+local function registerMutation(name,handler)
+    lib.callback.register(callbackPrefix..name,function(source,boardId,requestId,...)
+        local id=tonumber(requestId)
+        if not id or id~=id or id%1~=0 or id<1 or id>9007199254740991 or type(boardId)~='string' then
+            return {ok=false,message=Config.Text.invalidInput}
+        end
+        local key=boardId..':'..tostring(id)
+        if mutationLocks[key] then return {ok=false,message=Config.Text.notAvailable} end
+        mutationLocks[key]=true
+        local ok,result=pcall(handler,source,boardId,id,...)
+        mutationLocks[key]=nil
+        if not ok then print('[Omnite requests] '..tostring(result)) return {ok=false,message=Config.Text.notAvailable} end
+        return result
+    end)
+end
 
 local function playerData(source)
     local player = exports.qbx_core:GetPlayer(source)
@@ -54,6 +70,7 @@ end
 
 local function nearBoard(source, board)
     if not board.coords then return false end
+    if (board.bucket or 0)~=GetPlayerRoutingBucket(source) then return false end
     local ped = GetPlayerPed(source)
     if ped == 0 then return false end
     local size = board.size or vec3(1.0, 1.0, 1.0)
@@ -66,7 +83,7 @@ local function errorResponse(message)
 end
 
 local function readyAndAuthorized(source, boardId, action)
-    if not dbReady then return nil, errorResponse(Config.Text.databaseNotReady) end
+    if not dbReady or not PTechRequests.PlacementsReady then return nil, errorResponse(Config.Text.databaseNotReady) end
     local board = PTechRequests.GetBoard(boardId)
     if not board then return nil, errorResponse(Config.Text.boardNotFound) end
     if not nearBoard(source, board) then return nil, errorResponse(Config.Text.tooFar) end
@@ -158,7 +175,7 @@ local function getBoardData(source, boardId)
             type = board.type,
             fields = board.fields or {},
             deliveryItems = board.deliveryItems or {},
-            maxAcceptances = board.maxAcceptances or 1,
+            maxAcceptances = 1,
             maxDeliveryQuantity = board.maxDeliveryQuantity or 1,
         },
         requests = rows,
@@ -196,8 +213,7 @@ lib.callback.register(callbackPrefix .. 'createRequest', function(source, boardI
 
     local maxAcceptances, deliveryItem, deliveryLabel, maxQuantity, rewardPerItem = 0, nil, nil, 0, 0
     if mode == 'accepted' then
-        maxAcceptances = integerInRange(payload.maxAcceptances, 1, tonumber(board.maxAcceptances) or 1)
-        if not maxAcceptances then return errorResponse(Config.Text.invalidInput) end
+        maxAcceptances = 1
     else
         local allowedItem
         for _, item in ipairs(board.deliveryItems or {}) do
@@ -226,17 +242,17 @@ lib.callback.register(callbackPrefix .. 'createRequest', function(source, boardI
     return response
 end)
 
-lib.callback.register(callbackPrefix .. 'acceptRequest', function(source, boardId, requestId)
+registerMutation('acceptRequest', function(source, boardId, requestId)
     local board, failure = readyAndAuthorized(source, boardId, 'accept')
     if not board then return failure end
     local data = playerData(source)
     if not data then return errorResponse(Config.Text.playerInfoUnavailable) end
 
     local updated = MySQL.update.await(([[
-        UPDATE `%s` SET status = IF(accepted_count + 1 >= max_acceptances, 'accepted', 'open'),
+        UPDATE `%s` SET status = 'accepted',
             accepted_count = accepted_count + 1
         WHERE id = ? AND board_id = ? AND mode = 'accepted'
-          AND status IN ('open', 'accepted') AND accepted_count < max_acceptances
+          AND status = 'open' AND accepted_count = 0 AND max_acceptances >= 1
     ]]):format(requestsTable), { tonumber(requestId), board.id })
     if not updated or updated < 1 then return errorResponse(Config.Text.notAvailable) end
 
@@ -260,7 +276,7 @@ lib.callback.register(callbackPrefix .. 'acceptRequest', function(source, boardI
     return response
 end)
 
-lib.callback.register(callbackPrefix .. 'completeRequest', function(source, boardId, requestId)
+registerMutation('completeRequest', function(source, boardId, requestId)
     local board, failure = readyAndAuthorized(source, boardId)
     if not board then return failure end
     local data = playerData(source)
@@ -302,7 +318,7 @@ lib.callback.register(callbackPrefix .. 'completeRequest', function(source, boar
     return response
 end)
 
-lib.callback.register(callbackPrefix .. 'deliverItems', function(source, boardId, requestId, quantity)
+registerMutation('deliverItems', function(source, boardId, requestId, quantity)
     local board, failure = readyAndAuthorized(source, boardId, 'deliver')
     if not board then return failure end
     local data = playerData(source)
@@ -353,7 +369,7 @@ lib.callback.register(callbackPrefix .. 'deliverItems', function(source, boardId
     return response
 end)
 
-lib.callback.register(callbackPrefix .. 'cancelRequest', function(source, boardId, requestId)
+registerMutation('cancelRequest', function(source, boardId, requestId)
     local board, failure = readyAndAuthorized(source, boardId)
     if not board then return failure end
     local data = playerData(source)
@@ -417,5 +433,11 @@ CreateThread(function()
                 FOREIGN KEY (`request_id`) REFERENCES `%s` (`id`) ON DELETE CASCADE
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     ]]):format(acceptancesTable, requestsTable))
+    -- 旧版で複数人が受注済みの記録は保持し、新しい受注は追加しません。
+    MySQL.query.await(([[
+        UPDATE `%s` SET max_acceptances = GREATEST(accepted_count, 1),
+            status = IF(accepted_count > 0, 'accepted', 'open')
+        WHERE mode = 'accepted' AND status IN ('open', 'accepted')
+    ]]):format(requestsTable))
     dbReady = true
 end)

@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="ja">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel="stylesheet" href="style.css">
+    <title>Omnite Seating</title>
+</head>
+<body>
+    <section id="placement-panel" class="hidden" role="dialog" aria-modal="true" aria-labelledby="placement-title">
+        <div class="eyebrow">OMINI 工具箱</div>
+        <h1 id="placement-title">座席の調整</h1>
+        <p id="placement-location"></p>
+        <p class="hint">赤X＝左右・緑Y＝前後・青Z＝高さ。円は向きの回転軸です。移動は現在の向きに沿います。バー・数値入力で調整、Enterで確定。</p>
+        <label class="slider-row" for="seat-right"><span>左右 · X</span><output id="value-right">0.00 m</output>
+            <input id="seat-right" data-key="right" type="range" min="-2" max="2" step="0.01" value="0">
+            <span class="endpoints"><span>左</span><span>右</span></span></label>
+        <label class="slider-row" for="seat-forward"><span>前後 · Y</span><output id="value-forward">0.00 m</output>
+            <input id="seat-forward" data-key="forward" type="range" min="-2" max="2" step="0.01" value="0">
+            <span class="endpoints"><span>後ろ</span><span>前</span></span></label>
+        <label class="slider-row" for="seat-height"><span>高さ · Z</span><output id="value-height">0.00 m</output>
+            <input id="seat-height" data-key="height" type="range" min="-2" max="2" step="0.01" value="0">
+            <span class="endpoints"><span>低く</span><span>高く</span></span></label>
+        <button id="placement-ground" class="view-button" type="button">地面に足をつける · 高さの下限に設定</button>
+        <label class="slider-row" for="seat-heading"><span>向き</span><output id="value-heading">0.0°</output>
+            <input id="seat-heading" data-key="heading" type="range" min="0" max="359.9" step="0.1" value="0"></label>
+        <label id="style-row" class="slider-row" for="seat-style"><span>座り方</span><output id="value-style"></output>
+            <input id="seat-style" data-key="style" type="range" min="1" max="3" step="1" value="1"></label>
+        <p id="bed-hint" class="hint hidden">この種類で使える姿勢は1種類です。</p>
+        <p id="placement-error" role="status" aria-live="polite"></p>
+        <div class="actions"><button id="placement-save" type="button">保存する</button><button id="placement-cancel" type="button" class="secondary">キャンセル</button></div>
+        <button id="placement-focus" type="button" class="view-button">歩いて位置を確認 · ALT</button>
+        <p id="focus-hint" class="hint hidden">移動キーで歩けます。ALTでスライダー操作に戻れます。</p>
+    </section>
+    <main id="copy-panel" class="hidden" role="dialog" aria-modal="true" aria-labelledby="title">
+        <h1 id="title">座席設定をコピー</h1>
+        <p>下のボタンで設定行をクリップボードにコピーします。</p>
+        <textarea id="config-line" readonly spellcheck="false"></textarea>
+        <div class="actions">
+            <button id="copy-button" type="button">コピー</button>
+            <button id="close-button" class="secondary" type="button">閉じる</button>
+        </div>
+        <p id="status" aria-live="polite"></p>
+    </main>
+    <script src="app.js"></script>
+<script src="data.js"></script>
+</body>
+</html>

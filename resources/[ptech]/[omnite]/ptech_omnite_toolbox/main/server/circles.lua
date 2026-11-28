@@ -25,15 +25,19 @@ local function inside(c,p)
 end
 local function valid(p)
     if type(p)~='table' or type(p.name)~='string' or not p.name:match('%S') or p.name:find('%c')
-        or not utf8.len(p.name) or utf8.len(p.name)>64 or type(p.message)~='string'
+        or (p.kind~=nil and p.kind~='starter' and p.kind~='npc_repellent')
+        or type(p.enabled)~='boolean' or not point(p.center)
+        or not S.finite(p.radius,Config.Circles.maxRadius) or p.radius<2 then return false end
+    if not utf8.len(p.name) or utf8.len(p.name)>64 then return false end
+    if p.kind=='npc_repellent' then return p.tier==nil or p.tier=='low' or p.tier=='high' end
+    if type(p.message)~='string'
         or not utf8.len(p.message) or utf8.len(p.message)>256 or p.message:find('%c')
-        or type(p.enabled)~='boolean' or not point(p.center) or not point(p.destination)
-        or not S.finite(p.radius,Config.Circles.maxRadius) or p.radius<2
+        or not point(p.destination)
         or not S.finite(p.delay,Config.Circles.maxDelay) or p.delay<0 or p.delay%1~=0 then return false end
     return inside(p.destination,p)
 end
 local function public(p)
-    return {id=p.id,name=p.name,center=p.center,destination=p.destination,radius=p.radius,
+    return {id=p.id,kind=p.kind or 'starter',tier=p.kind=='npc_repellent' and (p.tier or 'low') or nil,name=p.name,center=p.center,destination=p.destination,radius=p.radius,
         delay=p.delay,message=p.message,enabled=p.enabled,bucket=p.bucket,revision=p.revision}
 end
 local function state(src)
@@ -87,7 +91,7 @@ lib.callback.register(prefix..'appearance',function(src,id)
     if not ready or not rate(src) then return fail('少し待ってから操作してください。') end
     local p=points[tostring(id)]
     local ped=GetPlayerPed(src)
-    if not p or not p.enabled or p.bucket~=GetPlayerRoutingBucket(src) or ped==0
+    if not p or p.kind=='npc_repellent' or not p.enabled or p.bucket~=GetPlayerRoutingBucket(src) or ped==0
         or not inside(GetEntityCoords(ped),p) or GetVehiclePedIsIn(ped,false)~=0 or S.hasSeat(src) then
         return fail('有効なサークル内で、徒歩で立った状態で操作してください。')
     end
@@ -103,19 +107,24 @@ end)
 lib.callback.register(prefix..'save',function(src,input)
     if not admin(src) then return fail('管理者のみ操作できます。') end
     if not ready or not rate(src) then return fail('少し待ってから操作してください。') end
-    if not valid(input) then return fail('設定値を確認してください。連れ戻し先は範囲内に指定してください。') end
+    if not valid(input) then return fail('名前・中心・半径などの設定値を確認してください。スターターの連れ戻し先は範囲内に指定してください。') end
     local id=input.id and tostring(input.id)
     local old=id and points[id]
     local bucket=GetPlayerRoutingBucket(src)
     if id and (not old or old.bucket~=bucket or old.revision~=input.revision) then return fail('情報が更新されています。開き直してください。') end
+    if old and (old.kind or 'starter')~=(input.kind or 'starter') then return fail('サークルの種類は変更できません。') end
     local count=0
     for _ in pairs(points) do count=count+1 end
     if not id and count>=Config.Circles.maxTotal then return fail('登録上限に達しています。') end
     local key=id or '__create'
     if locks[key] then return fail('保存処理中です。') end
     locks[key]=true
-    local p={name=input.name,center=input.center,destination=input.destination,radius=input.radius,
+    local p={kind=input.kind or 'starter',name=input.name,center=input.center,destination=input.destination,radius=input.radius,
         delay=input.delay,message=input.message,enabled=input.enabled,bucket=bucket,revision=old and old.revision+1 or 1}
+    if p.kind=='npc_repellent' then
+        p.tier=input.tier or 'low'
+        p.destination,p.delay,p.message=nil,nil,nil
+    end
     local ok,result=pcall(function()
         if old then
             return MySQL.update.await('UPDATE ptech_omnite_circles SET payload=?,revision=revision+1 WHERE id=? AND revision=?',
@@ -129,7 +138,7 @@ lib.callback.register(prefix..'save',function(src,input)
     if not ok or not result then return fail('DBに保存できませんでした。') end
     p.id=id
     points[id]=p
-    clearCircle(id,p.enabled and p or nil)
+    clearCircle(id,p.enabled and p.kind=='starter' and p or nil)
     publish()
     return {ok=true,id=id}
 end)
@@ -159,7 +168,7 @@ end
 lib.callback.register(prefix..'escape',function(src,id,password)
     if not ready or not rate(src) then return fail('少し待ってから操作してください。') end
     local p=points[tostring(id)]
-    if not p or p.bucket~=GetPlayerRoutingBucket(src) or not S.near(src,p.center,Config.Circles.interactDistance+0.5) then
+    if not p or p.kind=='npc_repellent' or p.bucket~=GetPlayerRoutingBucket(src) or not S.near(src,p.center,Config.Circles.interactDistance+0.5) then
         return fail('サークルの編集ポイントに近づいてください。')
     end
     if type(password)~='string' or password~=escapePassword then return fail('脱出パスワードが違います。') end
@@ -168,7 +177,7 @@ lib.callback.register(prefix..'escape',function(src,id,password)
     members[src]={}
     escaped[src]={}
     for key,entry in pairs(points) do
-        if entry.enabled and entry.bucket==p.bucket then escaped[src][key]=entry.revision end
+        if entry.kind~='npc_repellent' and entry.enabled and entry.bucket==p.bucket then escaped[src][key]=entry.revision end
     end
     TriggerClientEvent(prefix..'clearWarnings',src)
     move(src,Config.Circles.escapeDestination)
@@ -188,7 +197,7 @@ function S.tickCircles()
             escaped[src]=escaped[src] or {}
             for id,p in pairs(points) do
                 local m=members[src][id]
-                if not p.enabled or p.bucket~=bucket or (m and m.revision~=p.revision) then
+                if p.kind=='npc_repellent' or not p.enabled or p.bucket~=bucket or (m and m.revision~=p.revision) then
                     if m then TriggerClientEvent(prefix..'warning',src,id,false) end
                     members[src][id],escaped[src][id]=nil,nil
                 elseif escaped[src][id] then

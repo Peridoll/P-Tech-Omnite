@@ -449,6 +449,38 @@ local function openTool()
             if GetResourceState('ptech_omnite_delivery')~='started' then C.notify('ptech_omnite_delivery を起動してください。') return end
             exports.ptech_omnite_delivery:openManager()
         end}
+        options[#options+1]={title='ATM管理',icon='money-bill',onSelect=function()
+            if type(C.openATMs)~='function' then
+                C.notify('ATM管理が読み込まれていません。Toolboxの全ファイルを反映してリソースを再起動してください。')
+                print('[Omnite ATM] main/client/atms.lua is not loaded; check resource files and fxmanifest.lua')
+                return
+            end
+            local ok,err=pcall(C.openATMs)
+            if not ok then
+                C.notify('ATM管理を開けませんでした。F8の[Omnite ATM]ログを確認してください。')
+                print('[Omnite ATM] Open manager failed: '..tostring(err))
+            end
+        end}
+        options[#options+1]={title='依頼ボード管理',icon='clipboard-list',onSelect=function()
+            if GetResourceState('ptech_omnite_requests')~='started' then C.notify('ptech_omnite_requestsを起動してください。') return end
+            exports.ptech_omnite_requests:openManager()
+        end}
+        options[#options+1]={title='マップブリップ管理',icon='map-pin',onSelect=function()
+            if type(C.openMapBlips)~='function' then C.notify('マップブリップ管理が読み込まれていません。Toolboxの全ファイルを反映してリソースを再起動してください。') return end
+            C.openMapBlips()
+        end}
+        options[#options+1]={title='乗車中の車を複製',icon='copy',onSelect=function()
+            if type(C.cloneVehicle)~='function' then C.notify('車両複製が読み込まれていません。Toolboxの全ファイルを反映してリソースを再起動してください。') return end
+            C.cloneVehicle()
+        end}
+        options[#options+1]={title='宝箱NPC管理',icon='gift',onSelect=function()
+            if type(C.openTreasures)~='function' then C.notify('宝箱NPC管理が読み込まれていません。Toolboxの全ファイルを反映してリソースを再起動してください。') return end
+            C.openTreasures()
+        end}
+        options[#options+1]={title='ジョブ共有スタッシュ管理',icon='box-archive',onSelect=function()
+            if type(C.openJobStashes)~='function' then C.notify('共有スタッシュ管理が読み込まれていません。Toolboxの全ファイルを反映してリソースを再起動してください。') return end
+            C.openJobStashes()
+        end}
     end
     lib.registerContext({id='omnite_seat_tool',title='Omini工具箱',options=options})
     lib.showContext('omnite_seat_tool')

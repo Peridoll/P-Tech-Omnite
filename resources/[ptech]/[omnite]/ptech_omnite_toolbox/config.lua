@@ -1,5 +1,59 @@
 Config = {}
 
+-- 指定JOBのメンバーで中身を共有するスタッシュの設置設定。
+Config.JobStashes = {
+    maxTotal = 500, -- 設置数の上限
+    slots = 100, -- 新規スタッシュの初期スロット数
+    maxWeight = 500000, -- 初期重量上限（g、500kg）
+    maxSlots = 500, -- 設定可能なスロット数の上限
+    weightLimit = 100000000, -- 設定可能な重量上限（g）
+    interactDistance = 2.5, -- 利用距離（m）
+}
+
+-- ショップ情報の再取得と、近距離のNPC読み込み。
+Config.ShopStreaming = {
+    spawnDistance = 80.0, -- この距離まで近づくと再取得・NPC生成（m）
+    despawnDistance = 100.0, -- この距離より離れるとNPCを片付ける（m）
+    refreshInterval = 15000, -- 一覧の取りこぼしを回復する定期同期（ms）
+    refreshCooldown = 3000, -- 接近による再取得の最短間隔（ms）
+    retryInterval = 5000, -- 一覧取得失敗時の再試行間隔（ms）
+    modelTimeout = 5000, -- 各NPCモデルの読込待ち上限（ms）
+}
+
+-- 宝箱NPCごとの報酬セットと、キャラクターごとの受取記録をDBへ保存します。
+Config.Treasure = {
+    maxTotal = 500, -- 設置できるNPCの上限
+    slots = 50, -- 報酬設定用スタッシュのスロット数
+    maxWeight = 100000000, -- 設定用スタッシュの重量上限（g）
+    interactDistance = 2.5, -- 話しかけられる距離（m）
+    model = 's_m_m_highsec_01', -- 新規設置時のNPCモデル
+}
+
+-- 管理者が乗車中の車を、その場に複製する機能です。
+Config.VehicleClone = {
+    spacing = 2.0, -- 元車の大きさに追加する出現間隔（m）
+    maxSpawnDistance = 50.0, -- 元車から複製先までの距離上限（m）
+    cooldown = 5000, -- 同じ管理者が次に複製できるまでの間隔（ms）
+    timeout = 20000, -- 複製先の読込・改造反映を待つ上限（ms）
+}
+
+-- 工具箱から配置する地図アイコン。登録後の設定はDBに保存します。
+Config.MapBlips = {
+    maxTotal = 500, -- 全インスタンスを合わせた設置上限
+    defaultSprite = 1, -- 新規設置時のブリップアイコンID
+    defaultColour = 0, -- 新規設置時の色ID
+    defaultScale = 0.8, -- 新規設置時の表示倍率
+    fixed = {}, -- 管理画面のConfig出力をここへ貼り付けできます。
+}
+
+-- ATMは既存の銀行リソースが反応するpropだけを設置します。
+Config.ATMs = {
+    models = { 'prop_atm_01', 'prop_atm_02', 'prop_atm_03', 'prop_fleeca_atm' },
+    maxTotal = 500, -- 全インスタンスを合わせた設置上限
+    streamDistance = 100.0, -- propを生成する距離（m）
+    fixed = {}, -- 管理画面のConfig出力をここへ貼り付けできます。
+}
+
 Config.Circles = {
     interactDistance = 1.75,
     markerDistance = 30.0,

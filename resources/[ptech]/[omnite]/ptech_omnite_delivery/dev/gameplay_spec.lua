@@ -4,7 +4,8 @@ local progressResult, duringProgress, duringModel = true,nil,nil
 local now = 100000
 local entities = {[1]=true}
 local currentToken = 'mission1'
-os.time=function() return now end
+os=nil
+function GetCloudTimeAsInt() return now end
 function PlayerPedId() return 1 end
 function DoesEntityExist(entity) return entities[entity] == true end
 function IsEntityPlayingAnim() return carrying end

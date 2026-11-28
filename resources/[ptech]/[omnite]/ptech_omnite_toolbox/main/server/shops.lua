@@ -11,12 +11,25 @@ local function near(src,p)
     local c=GetEntityCoords(GetPlayerPed(src))
     return (c.x-p.coords.x)^2+(c.y-p.coords.y)^2+(c.z-p.coords.z)^2<=9
 end
+local function matchesJob(names,legacy,name)
+    if names then for _,entry in ipairs(names) do if entry==name then return true end end return false end
+    return legacy==name
+end
 local function allowed(src,p,mode)
     if not ready or not p or not near(src,p) then return false end
     local job=role(src)
-    if mode=='sales' then return job and p.stockJob and job.name==p.stockJob and job.isboss==true end
-    if mode=='stock' then return manager(src) or (job and p.stockJob and job.name==p.stockJob) end
-    return not p.purchaseJob or (job and job.name==p.purchaseJob)
+    if mode=='sales' then
+        local access=p.vaultAccess
+        if not access then return job and matchesJob(p.stockJobs,p.stockJob,job.name) and job.isboss==true end
+        if not job or not matchesJob(access.jobs,nil,job.name) or (access.bossOnly and job.isboss~=true) then return false end
+        local grade=type(job.grade)=='table' and job.grade.level or job.grade
+        return (tonumber(grade) or 0)>=(access.grades[job.name] or 0)
+    end
+    if mode=='stock' then return manager(src) or (p.finite and job and matchesJob(p.stockJobs,p.stockJob,job.name)) end
+    if not p.purchaseJob and (not p.purchaseJobs or #p.purchaseJobs==0) then return true end
+    if not job or not matchesJob(p.purchaseJobs,p.purchaseJob,job.name) then return false end
+    local grade=type(job.grade)=='table' and job.grade.level or job.grade
+    return (tonumber(grade) or 0)>=(p.purchaseGrades and p.purchaseGrades[job.name] or 0)
 end
 local function stock(id) return prefix..'stock:'..id end
 local function sales(id) return prefix..'sales:'..id end
@@ -31,7 +44,7 @@ local function sku(item) return item.name..'|'..stable(item.metadata or {}) end
 local function contents(id) return inv:GetInventoryItems(id) or {} end
 local function register(p)
     inv:RegisterStash(stock(p.id),p.name..' 商品',500,100000000,false,nil,vec3(p.coords.x,p.coords.y,p.coords.z))
-    inv:RegisterStash(sales(p.id),p.name..' 売上',10,1000000000,false,nil,vec3(p.coords.x,p.coords.y,p.coords.z))
+    inv:RegisterStash(sales(p.id),p.name..' 金庫（売上）',10,1000000000,false,nil,vec3(p.coords.x,p.coords.y,p.coords.z))
     stashes[stock(p.id)]={id=p.id,kind='stock'} stashes[sales(p.id)]={id=p.id,kind='sales'}
 end
 local function visible(src)
@@ -40,6 +53,22 @@ end
 local function publish()
     for _,src in ipairs(GetPlayers()) do TriggerClientEvent(prefix..'state',tonumber(src),visible(tonumber(src))) end
 end
+local playerBuckets={}
+CreateThread(function()
+    while true do
+        Wait(2000)
+        if ready then
+            for _,value in ipairs(GetPlayers()) do
+                local src=tonumber(value) local bucket=GetPlayerRoutingBucket(src)
+                if playerBuckets[src]~=bucket then
+                    playerBuckets[src]=bucket
+                    TriggerClientEvent(prefix..'state',src,visible(src))
+                end
+            end
+        end
+    end
+end)
+AddEventHandler('playerDropped',function() playerBuckets[source]=nil end)
 local function save(p)
     MySQL.query.await('INSERT INTO ptech_omnite_shops (id,payload) VALUES (?,?) ON DUPLICATE KEY UPDATE payload=VALUES(payload)',{p.id,json.encode(p)})
 end
@@ -54,6 +83,16 @@ local function locked(id,fn)
 end
 local function text(v,n) return type(v)=='string' and utf8.len(v) and utf8.len(v)>0 and utf8.len(v)<=n and not v:find('%c') end
 local function job(v) return v==nil or (text(v,48) and v:match('^[%w_-]+$')) end
+local function jobList(value,legacy)
+    if value==nil then return job(legacy) and (legacy and {legacy} or {}) or nil end
+    if type(value)~='table' then return end
+    local result,seen={},{}
+    for key,name in pairs(value) do
+        if type(key)~='number' or key%1~=0 or key<1 or key>#value or not name or not job(name) then return end
+        if not seen[name] then result[#result+1]=name seen[name]=true end
+    end
+    return result
+end
 local function finite(v,min,max) return type(v)=='number' and v==v and v>=min and v<=max end
 MySQL.ready(function()
     local ok,err=pcall(function()
@@ -67,28 +106,67 @@ MySQL.ready(function()
 end)
 lib.callback.register(prefix..'list',function(src)
     if not ready then return fail('ショップを初期化中です。') end
-    return {ok=true,shops=visible(src),manager=manager(src)}
+    local isManager=manager(src)
+    return {ok=true,shops=visible(src),manager=isManager,jobs=isManager and exports.qbx_core:GetJobs() or nil}
 end)
 lib.callback.register(prefix..'save',function(src,input)
     if not manager(src) then return fail('管理者権限と工具箱が必要です。') end
     return locked('settings',function()
-        if type(input)~='table' or not text(input.name,64) or not job(input.purchaseJob) or not job(input.stockJob)
+        if type(input)~='table' then return fail('ショップ設定が不正です。') end
+        local purchaseJobs,stockJobs=jobList(input.purchaseJobs,input.purchaseJob),jobList(input.stockJobs,input.stockJob)
+        if not text(input.name,64) or not purchaseJobs or not stockJobs
             or type(input.finite)~='boolean' or not (input.model==false or text(input.model,100)) then return fail('ショップ設定が不正です。') end
         local old=input.id and shops[input.id]
         if input.id and not old then return fail('ショップが削除されています。') end
         if old and (locks[old.id] or input.revision~=old.revision) then return fail('ショップを開き直してください。') end
+        local limits=input.purchaseGrades
+        if limits==nil then limits=old and old.purchaseGrades or {} end
+        if type(limits)~='table' then return fail('販売可能階級が不正です。') end
+        for name,level in pairs(limits) do
+            if not job(name) or not finite(level,0,100000) or level%1~=0 then return fail('販売可能階級が不正です。') end
+        end
+        local purchaseGrades={}
+        for _,name in ipairs(purchaseJobs) do purchaseGrades[name]=limits[name] or 0 end
         local c=input.coords
+        local coordinateMode=old and old.coordinateMode
         if old and not input.relocate then c=old.coords input.heading=old.heading end
+        if not old or input.relocate then
+            if input.coordinateMode~=nil and input.coordinateMode~='origin' then return fail('配置座標の形式が不正です。') end
+            coordinateMode=input.coordinateMode
+        end
         if not c or not finite(c.x,-10000,10000) or not finite(c.y,-10000,10000) or not finite(c.z,-1000,3000)
             or not finite(input.heading,0,360) then return fail('配置が不正です。') end
         if not old or input.relocate then
             local here=GetEntityCoords(GetPlayerPed(src))
             if (here.x-c.x)^2+(here.y-c.y)^2+(here.z-c.z)^2>9 then return fail('現在地の近くに配置してください。') end
         end
-        local p={id=old and old.id or MySQL.scalar.await('SELECT UUID()'),name=input.name,coords=c,heading=input.heading,
-            model=input.model,finite=input.finite,purchaseJob=input.purchaseJob,stockJob=input.stockJob,
+        local p={id=old and old.id or MySQL.scalar.await('SELECT UUID()'),name=input.name,coords=c,heading=input.heading,coordinateMode=coordinateMode,
+            model=input.model,finite=input.finite,vaultAccess=old and old.vaultAccess or nil,purchaseJobs=purchaseJobs,purchaseGrades=purchaseGrades,stockJobs=stockJobs,
             bucket=old and old.bucket or GetPlayerRoutingBucket(src),revision=old and old.revision+1 or 1,products=old and old.products or {}}
         save(p) shops[p.id]=p register(p) publish()
+        return {ok=true}
+    end)
+end)
+lib.callback.register(prefix..'vaultAccess',function(src,id,input)
+    if not manager(src) then return fail('管理者のみ操作できます。') end
+    return locked('settings',function()
+        local p=shops[id]
+        if not p or type(input)~='table' or input.revision~=p.revision or locks[id] then return fail('ショップを開き直してください。') end
+        if type(input.inherit)~='boolean' then return fail('金庫権限が不正です。') end
+        local access
+        if not input.inherit then
+            local names=jobList(input.jobs)
+            if not names or type(input.grades)~='table' or type(input.bossOnly)~='boolean' then return fail('金庫権限が不正です。') end
+            local selected={} for _,name in ipairs(names) do selected[name]=true end
+            for name,level in pairs(input.grades) do
+                if not selected[name] or not finite(level,0,100000) or level%1~=0 then return fail('金庫の最低階級が不正です。') end
+            end
+            local grades={} for _,name in ipairs(names) do grades[name]=input.grades[name] or 0 end
+            access={jobs=names,grades=grades,bossOnly=input.bossOnly}
+        end
+        local copy=json.decode(json.encode(p))
+        copy.vaultAccess=access copy.revision=copy.revision+1
+        save(copy) shops[id]=copy publish()
         return {ok=true}
     end)
 end)
@@ -133,7 +211,7 @@ local function registerOffer(p)
         end
     end
     local name='omnite_shop_'..p.id
-    inv:RegisterShop(name,{name=p.name,inventory=list}) offers[name]={id=p.id,slots=map}
+    inv:RegisterShop(name,{name=p.name,inventory=list,randomprices=false}) offers[name]={id=p.id,slots=map}
     return name
 end
 lib.callback.register(prefix..'open',function(src,id)
@@ -166,7 +244,6 @@ end,{inventoryFilter={'^omnite_shop_'}})
 -- The installed ox_inventory exposes post-hook events with a success flag.
 -- Reserve the physical item before purchase, and roll it back when ox rejects the sale.
 local pending={}
-local nextSale=0
 local buyHook=inv:registerHook('buyItem',function(payload)
     local offer=offers[payload.shopType]
     local p=offer and shops[offer.id]
@@ -187,13 +264,16 @@ local buyHook=inv:registerHook('buyItem',function(payload)
         if p.finite then inv:AddItem(stock(p.id),item.name,payload.count,item.metadata,item.slot) end
         locks[p.id]=nil return false
     end
-    nextSale=nextSale+1
-    payload.omniteSale=nextSale
-    pending[payload.source]={token=nextSale,id=p.id,item=item,count=payload.count,cost=payload.totalPrice,finite=p.finite}
+    -- Export callbacks receive a copied payload. Correlate the post event using
+    -- original fields instead of a token added to that copy.
+    pending[payload.source]={shopType=payload.shopType,slot=payload.fromSlot.slot,id=p.id,item=item,
+        count=payload.count,cost=payload.totalPrice,finite=p.finite}
 end,{inventoryFilter={'^omnite_shop_'}})
 AddEventHandler(buyHook,function(success,payload)
     local pendingSale=pending[payload.source]
-    if not pendingSale or pendingSale.token~=payload.omniteSale then return end
+    if not pendingSale or pendingSale.shopType~=payload.shopType or not payload.fromSlot
+        or pendingSale.slot~=payload.fromSlot.slot or pendingSale.item.name~=payload.itemName
+        or pendingSale.count~=payload.count or pendingSale.cost~=payload.totalPrice then return end
     pending[payload.source]=nil
     local p=shops[pendingSale.id]
     if not success then

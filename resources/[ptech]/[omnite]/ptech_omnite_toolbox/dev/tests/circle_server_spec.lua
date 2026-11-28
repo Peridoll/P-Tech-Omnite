@@ -79,6 +79,7 @@ function runCircleSpecs()
     buckets[1]=1 assert(not invoke(1,'appearance',p.id).ok,'other bucket cannot open initial appearance') buckets[1]=0
     local list=invoke(2,'list')
     assert(list.ok and not list.admin and list.points[p.id],'ordinary player gets interaction state')
+    assert(list.points[p.id].kind=='starter','legacy circle defaults to starter')
     assert(not list.points[p.id].password,'password not public')
     assert(not invoke(2,'delete',p.id,1).ok,'non-admin cannot delete')
     tick() tick(12000) assert(not moves[2],'players who never entered are not constrained')
@@ -115,4 +116,25 @@ function runCircleSpecs()
     init() assert(invoke(1,'list').points[p.id].revision==4,'DB reload restores settings')
     assert(invoke(1,'delete',p.id,4).ok,'admin deletion persists')
     assert(not invoke(1,'list').points[p.id],'deleted circle no longer listed')
+    local repel={kind='npc_repellent',name='人除け',center={x=0,y=0,z=10,heading=0},radius=50,enabled=true}
+    repel.kind='unknown' assert(not invoke(1,'save',repel).ok,'unknown kind is rejected') repel.kind='npc_repellent'
+    assert(not invoke(2,'save',repel).ok,'non-admin cannot create repellent circles')
+    local created=invoke(1,'save',repel) assert(created.ok,'repellent needs no destination or countdown')
+    local savedRepel=invoke(1,'list').points[created.id]
+    assert(savedRepel.kind=='npc_repellent' and not savedRepel.destination and not savedRepel.delay)
+    assert(savedRepel.tier=='low','existing repellent defaults to low')
+    repel.tier='invalid' assert(not invoke(1,'save',repel).ok,'unknown tier rejected')
+    repel.id,repel.revision,repel.tier=created.id,1,'high'
+    assert(invoke(1,'save',repel).ok,'admin can switch to high')
+    assert(invoke(1,'list').points[created.id].tier=='high','tier published to clients')
+    positions[1]={x=0,y=0,z=10}
+    assert(not invoke(1,'appearance',created.id).ok,'repellent does not allow appearance editing')
+    assert(not invoke(1,'escape',created.id,'4155').ok,'repellent does not provide starter escape')
+    buckets[2]=0 positions[2]={x=0,y=0,z=10} tick()
+    local before=moves[2]
+    positions[2]={x=100,y=0,z=10} tick() tick(12000)
+    assert(moves[2]==before and not warnings[2],'repellent never constrains players')
+    buckets[1]=1 assert(not invoke(1,'list').points[created.id],'repellent is isolated by bucket') buckets[1]=0
+    init() assert(invoke(1,'list').points[created.id].tier=='high','repellent tier survives reload')
+    assert(invoke(1,'delete',created.id,2).ok,'repellent can be deleted')
 end

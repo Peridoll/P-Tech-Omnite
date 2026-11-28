@@ -76,10 +76,7 @@ local function createRequest(boardId, board)
     end
 
     if mode == 'accepted' then
-        inputs[#inputs + 1] = {
-            type = 'number', label = Config.Text.maxAcceptances, required = true,
-            min = 1, max = board.maxAcceptances or 1, default = 1,
-        }
+        payload.maxAcceptances = 1
     else
         local itemOptions = {}
         for _, item in ipairs(board.deliveryItems or {}) do
@@ -111,7 +108,7 @@ local function createRequest(boardId, board)
         valueIndex = valueIndex + 1
     end
     if mode == 'accepted' then
-        payload.maxAcceptances = extraValues[valueIndex]
+        payload.maxAcceptances = 1
     else
         payload.deliveryItem = extraValues[valueIndex]
         payload.maxQuantity = extraValues[valueIndex + 1]
@@ -177,7 +174,7 @@ function showBoard(boardId, response)
                 missionOptions[#missionOptions + 1] = { title = Config.Text.acceptedCount, description = table.concat(acceptedNames, '、'), disabled = true }
             end
             if permissions.canAccept and request.status ~= 'completed' and request.status ~= 'cancelled'
-                and request.accepted_count < request.max_acceptances and not request.myAcceptance then
+                and request.accepted_count == 0 and not request.myAcceptance then
                 missionOptions[#missionOptions + 1] = {
                     title = Config.Text.acceptMission,
                     onSelect = function() submitAction('acceptRequest', boardId, requestId) end,
@@ -234,24 +231,4 @@ function showBoard(boardId, response)
     lib.showContext(parentId)
 end
 
-CreateThread(function()
-    for _, board in ipairs(Config.Boards or {}) do
-        if board.id and board.coords and board.size then
-            exports.ox_target:addBoxZone({
-                coords = board.coords,
-                size = board.size,
-                rotation = board.rotation or 0.0,
-                debug = false,
-                options = {
-                    {
-                        name = ('ptech_omnite_requests_%s'):format(board.id),
-                        icon = 'fa-solid fa-clipboard-list',
-                        label = board.label or Config.Text.resourceTitle,
-                        distance = Config.InteractionDistance,
-                        onSelect = function() showBoard(board.id) end,
-                    },
-                },
-            })
-        end
-    end
-end)
+-- Target zones are synchronized by boards.lua after database initialization.

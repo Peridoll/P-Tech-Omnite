@@ -33,6 +33,7 @@ local function valid(p)
         or not number(p.coords.y, -10000, 10000) or not number(p.coords.z, -1000, 3000)
         or not number(p.heading, 0, 360) or not integer(p.bucket, 0, 2147483647) then return false end
     if p.model and (type(p.model)~='string' or #p.model>100 or not p.model:match('^[%w_]+$')) then return false end
+    if p.visibility~=nil and p.visibility~='always' and p.visibility~='mission' then return false end
     if p.kind == 'shop' then
         return type(p.job) == 'string' and #p.job <= 48 and p.job:match('^[%w_-]+$')
             and integer(p.reward, 0, 100000000) and integer(p.points, 1, 10000)
@@ -74,6 +75,7 @@ local function mission(src, p)
     if m and m.paid then
         F.complete(m)
         missions[src]=nil
+        TriggerClientEvent(prefix..'missionEnded',src,m.token,'配達の精算が完了しました。')
         return nil
     end
     if m and (m.expires <= os.time() or not p or m.owner ~= p.PlayerData.citizenid
@@ -129,6 +131,17 @@ MySQL.ready(function()
         else
             MySQL.query.await('INSERT INTO ptech_omnite_delivery_catalog (id,payload,revision) VALUES (1,?,1)',{json.encode(catalog)})
         end
+        -- 廃止済みの大人の飲食物資を保存済みカタログからも除く。他の設定値は保持する。
+        local retained={}
+        for _,product in ipairs(catalog) do
+            if product.item~='pomnite_adult_supply' then retained[#retained+1]=product end
+        end
+        if #retained~=#catalog then
+            local changed=MySQL.update.await('UPDATE ptech_omnite_delivery_catalog SET payload=?,revision=revision+1 WHERE id=1 AND revision=?',
+                {json.encode(retained),catalogRevision})
+            assert(changed==1,'Failed to remove retired delivery material')
+            catalog,catalogRevision=retained,catalogRevision+1
+        end
         MySQL.query.await([[CREATE TABLE IF NOT EXISTS ptech_omnite_delivery_accounts (
             job VARCHAR(48) NOT NULL PRIMARY KEY, points BIGINT UNSIGNED NOT NULL DEFAULT 0
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4]])
@@ -148,12 +161,15 @@ MySQL.ready(function()
     if not ok then print('[Omnite delivery] DB initialization failed: '..tostring(err)) end
 end)
 lib.callback.register(prefix..'state', function(src)
-    if not ready then return fail('配達の初期化中です。') end
-    if locks['player:'..src] then return fail('処理中です。少し待ってください。') end
-    return { ok = true, locations = state(src), mission = mission(src, player(src)), manager = manager(src) }
+    local m=missions[src]
+    return locked(src,m and 'shop:'..m.shop,function()
+        return { ok = true, locations = state(src), mission = mission(src, player(src)), manager = manager(src) }
+    end)
 end)
 lib.callback.register(prefix..'manage', function(src, action, input)
-    return locked(src, 'settings', function()
+    local id=(action=='save' and type(input)=='table' and input.id)
+        or (action=='delete' and type(input)=='string' and input)
+    return locked(src, type(id)=='string' and 'shop:'..id or 'settings', function()
         if not manager(src) then return fail('管理者権限と工具箱が必要です。') end
         if action == 'products' then
             local items={}
@@ -199,9 +215,11 @@ lib.callback.register(prefix..'manage', function(src, action, input)
             if type(input) ~= 'table' then return fail('設定が不正です。') end
             input.id=input.id or MySQL.scalar.await('SELECT UUID()')
             input.bucket = GetPlayerRoutingBucket(src)
-            if not valid(input) then return fail('ID・座標・ジョブ・報酬の設定を確認してください。') end
             local old = locations[input.id]
-            if locks['shop:'..input.id] or F.used(input.id) then return fail('配達・精算中のNPCは変更できません。') end
+            -- 報酬は店長の専用操作で設定。配置編集からは変更しない。
+            if input.kind=='shop' then input.reward=old and old.kind=='shop' and old.reward or Config.defaultReward end
+            if not valid(input) then return fail('ID・座標・ジョブ・報酬の設定を確認してください。') end
+            if F.used(input.id) then return fail('配達・精算中のNPCは変更できません。') end
             if old and old.bucket ~= input.bucket then return fail('別のバケットで使われているIDです。') end
             local count = 0
             for _ in pairs(locations) do count = count+1 end
@@ -217,7 +235,7 @@ lib.callback.register(prefix..'manage', function(src, action, input)
         elseif action == 'delete' then
             local p = type(input) == 'string' and locations[input]
             if not p or p.bucket ~= GetPlayerRoutingBucket(src) then return fail('地点が見つかりません。') end
-            if locks['shop:'..input] or F.used(input) then return fail('配達・精算中のNPCは削除できません。') end
+            if F.used(input) then return fail('配達・精算中のNPCは削除できません。') end
             local balance=F.account(input)
             if tonumber(balance.vault)>0 or tonumber(balance.points)>0 then return fail('金庫・ポイントが残っています。先に利用・出金してください。') end
             for _, fixed in ipairs(Config.locations) do if fixed.id == input then return fail('Config登録地点は設定ファイルから削除してください。') end end
@@ -233,15 +251,20 @@ lib.callback.register(prefix..'manage', function(src, action, input)
     end)
 end)
 lib.callback.register(prefix..'shop', function(src, id)
-    if not ready then return fail('配達の初期化中です。') end
-    if locks['player:'..src] then return fail('処理中です。少し待ってください。') end
-    local p, shop = player(src), type(id) == 'string' and locations[id]
-    if not shop or shop.kind ~= 'shop' or not employee(p, shop.job) or not near(src, shop) then return fail('この店舗の店員のみ利用できます。') end
-    return {ok=true, points=account(shop.id), vault=tonumber(F.account(shop.id).vault), reward=shop.reward, boss=p.PlayerData.job.isboss==true, mission=mission(src,p), products=catalog}
+    local m=missions[src]
+    return locked(src,'shop:'..tostring(m and m.shop or id),function()
+        local p, shop = player(src), type(id) == 'string' and locations[id]
+        if not shop or shop.kind ~= 'shop' or not employee(p, shop.job) or not near(src, shop) then return fail('この店舗の店員のみ利用できます。') end
+        local active=mission(src,p)
+        local balance=F.account(shop.id)
+        return {ok=true, points=tonumber(balance.points) or 0, vault=tonumber(balance.vault) or 0, reward=shop.reward, boss=p.PlayerData.job.isboss==true, mission=active, products=catalog}
+    end)
 end)
 lib.callback.register(prefix..'work', function(src, action, id)
     local shop = type(id) == 'string' and locations[id]
-    return locked(src, shop and 'shop:'..shop.id, function()
+    local active=missions[src]
+    local storeId=action~='start' and active and active.shop or (shop and shop.id)
+    return locked(src, storeId and 'shop:'..storeId, function()
         local p = player(src)
         if not p then return fail('プレイヤーを確認できません。') end
         local m = mission(src, p)
@@ -343,7 +366,11 @@ CreateThread(function()
         Wait(10000)
         if ready then
             for src in pairs(missions) do
-                if not locks['player:'..src] then mission(src,player(src)) end
+                local m=missions[src]
+                if not locks['player:'..src] and not locks['shop:'..m.shop] then
+                    -- A transient DB failure must not stop future expiration/refund checks.
+                    locked(src,'shop:'..m.shop,function() mission(src,player(src)) return {ok=true} end)
+                end
             end
             publish() -- routing bucket changes are reflected without a resource restart.
         end

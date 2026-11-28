@@ -1,7 +1,13 @@
 local prefix = 'ptech_omnite_delivery:'
 local locations, npcs, current = {}, {}, nil
 local blip, busy, managing, stopped
+local spawnErrors={}
 local kindNames = {pickup='配達先NPC',shop='店舗NPC'}
+local removeNpc
+local function shouldShowNpc(id,point)
+    return point.kind=='shop' or (point.kind=='pickup' and (point.visibility=='always'
+        or (current and not current.picked and current.pickup==id and current.expires>GetCloudTimeAsInt())))
+end
 local function notify(message, kind) lib.notify({description=message, type=kind or 'inform'}) end
 local function call(action, ...)
     local ok, result = pcall(lib.callback.await, prefix..action, false, ...)
@@ -11,6 +17,9 @@ local function call(action, ...)
 end
 local function route(m)
     current = m
+    for id,npc in pairs(npcs) do
+        if not shouldShowNpc(id,npc.point) then removeNpc(id) end
+    end
     DeliveryGameplay.update(m,locations)
     if blip then RemoveBlip(blip) blip = nil end
     local point = m and locations[m.picked and m.shop or m.pickup]
@@ -78,9 +87,19 @@ local function shopMenu(point)
         {title='箱を納品',disabled=not m or not m.picked or m.shop~=point.id,onSelect=function() work('deliver',point.id) end},
         {title='箱ポイントで素材を購入',description=('店舗共通残高：%d 箱ポイント'):format(result.points),onSelect=function() products(point) end},
     }
-    if result.boss then options[#options+1]={title='店舗金庫・配達報酬設定',description=('金庫残高 $%d'):format(result.vault or 0),onSelect=function()
+    if result.boss then options[#options+1]={title='配達員の報酬設定（店長）',description=('現在の1回分：$%d ／ 次の受注から適用'):format(point.reward),onSelect=function()
+        local input=lib.inputDialog('配達員への報酬（店長設定）',{
+            {type='number',label='納品1回の現金報酬',default=point.reward,min=0,max=100000000,precision=0,required=true},
+        })
+        if input then
+            local saved=call('vault',point.id,'reward',input[1])
+            if saved then notify('配達報酬を変更しました。次の受注から適用されます。','success') end
+        end
+        shopMenu(point)
+    end} end
+    if result.boss then options[#options+1]={title='店舗金庫（店長）',description=('金庫残高 $%d'):format(result.vault or 0),onSelect=function()
         local input=lib.inputDialog('店舗金庫（店長専用）',{
-            {type='select',label='操作',required=true,options={{value='deposit',label='現金を入金'},{value='withdraw',label='現金を出金'},{value='reward',label='納品報酬額を変更'}}},
+            {type='select',label='操作',required=true,options={{value='deposit',label='現金を入金'},{value='withdraw',label='現金を出金'}}},
             {type='number',label='金額',min=0,max=100000000,precision=0,required=true},
         })
         if input then call('vault',point.id,input[1],input[2]) end
@@ -93,26 +112,31 @@ local function shopMenu(point)
     lib.registerContext({id='omnite_delivery_shop',title=point.label,options=options})
     lib.showContext('omnite_delivery_shop')
 end
-local function removeNpc(id)
+removeNpc = function(id)
     local npc = npcs[id]
     if not npc then return end
     if npc.entity then
-        exports.ox_target:removeLocalEntity(npc.entity)
+        pcall(function() exports.ox_target:removeLocalEntity(npc.entity) end)
         if DoesEntityExist(npc.entity) then DeleteEntity(npc.entity) end
     end
     npcs[id] = nil
 end
-local function createNpc(id,point)
-    npcs[id] = {loading=true, point=point}
-    local pending = npcs[id]
+local function createNpc(id,point,pending)
+    if stopped or npcs[id]~=pending or locations[id]~=point then return end
+    if not shouldShowNpc(id,point) then npcs[id]=nil return end
     local ok, model = pcall(lib.requestModel,point.model or Config.npcModel,5000)
-    if not ok then if npcs[id]==pending then npcs[id]=nil end return end
+    if not ok then error('NPC model load failed: '..tostring(model)) end
     if stopped or npcs[id]~=pending or locations[id]~=point then SetModelAsNoLongerNeeded(model) return end
+    if not shouldShowNpc(id,point) then npcs[id]=nil SetModelAsNoLongerNeeded(model) return end
     local c = point.coords
-    local ped = CreatePed(4,model,c.x,c.y,c.z,point.heading,false,false)
+    -- 保存値はプレイヤーの中心座標。モデルの高さを引くと床に埋まるため減算しない。
+    local ped = CreatePed(4,model,c.x,c.y,c.z,point.heading,false,true)
     SetModelAsNoLongerNeeded(model)
-    if ped == 0 then npcs[id]=nil return end
+    if ped == 0 or not DoesEntityExist(ped) then error('CreatePed returned no entity') end
     pending.entity, pending.loading = ped, false
+    SetEntityAsMissionEntity(ped,true,true)
+    -- 生成時の補正に依存せず、保存した中心座標へ直接合わせてから固定する。
+    SetEntityCoordsNoOffset(ped,c.x,c.y,c.z,false,false,false)
     SetEntityInvincible(ped,true)
     FreezeEntityPosition(ped,true)
     SetBlockingOfNonTemporaryEvents(ped,true)
@@ -124,14 +148,29 @@ local function createNpc(id,point)
             if point.kind=='pickup' then return current and not current.picked and current.pickup==id end
             local data = exports.qbx_core:GetPlayerData()
             local job = data and data.job
-            return job and true and
-                point.kind=='shop' and job.name==point.job
+            return job and point.kind=='shop' and job.name==point.job
         end,
         onSelect=function()
             if point.kind=='pickup' then work('pickup',id)
             elseif point.kind=='shop' then shopMenu(point) end
         end,
     }})
+    spawnErrors[id]=nil
+end
+local function spawnNpc(id,point)
+    local pending={loading=true,point=point}
+    npcs[id]=pending
+    CreateThread(function()
+        local ok,err=xpcall(function() createNpc(id,point,pending) end,debug.traceback)
+        if not ok then
+            if npcs[id]==pending then removeNpc(id) end
+            if spawnErrors[id]~=tostring(err) then
+                spawnErrors[id]=tostring(err)
+                print(('[Omnite delivery] NPC spawn failed: %s (%s), model=%s, coords=%.2f,%.2f,%.2f\n%s')
+                    :format(point.label,id,point.model or Config.npcModel,point.coords.x,point.coords.y,point.coords.z,tostring(err)))
+            end
+        end
+    end)
 end
 local function setLocations(list)
     for id,npc in pairs(npcs) do
@@ -156,10 +195,14 @@ CreateThread(function()
         for id,point in pairs(locations) do
             local c = point.coords
             local distance = #(coords-vec3(c.x,c.y,c.z))
-            if distance<80 and not npcs[id] then CreateThread(function() createNpc(id,point) end)
+            local npc=npcs[id]
+            if npc and npc.entity and not DoesEntityExist(npc.entity) then removeNpc(id) end
+            if not shouldShowNpc(id,point) then
+                if npcs[id] then removeNpc(id) end
+            elseif distance<80 and not npcs[id] then spawnNpc(id,point)
             elseif distance>100 and npcs[id] then removeNpc(id) end
         end
-        if current and current.expires<=os.time() then route(nil) notify('配達の制限時間が終了しました。') end
+        if current and current.expires<=GetCloudTimeAsInt() then route(nil) notify('配達の制限時間が終了しました。') end
         Wait(1000)
     end
 end)
@@ -168,9 +211,9 @@ local function refresh()
     if result then setLocations(result.locations) route(result.mission) end
 end
 CreateThread(function() Wait(1500) refresh() end)
-AddEventHandler('QBCore:Client:OnPlayerLoaded',refresh)
-AddEventHandler('QBCore:Client:OnJobUpdate',function() refresh() end)
-AddEventHandler('QBCore:Client:OnPlayerUnload',function() route(nil) end)
+RegisterNetEvent('QBCore:Client:OnPlayerLoaded',refresh)
+RegisterNetEvent('QBCore:Client:OnJobUpdate',function() refresh() end)
+RegisterNetEvent('QBCore:Client:OnPlayerUnload',function() route(nil) end)
 
 local managerMenu, productMenu
 local function editProduct(product,revision,items)
@@ -217,14 +260,18 @@ local function edit(point,kind)
     local heading = GetEntityHeading(PlayerPedId())
     local p = point or {coords={x=coords.x,y=coords.y,z=coords.z},heading=heading,kind=kind or 'shop',reward=Config.defaultReward,points=Config.defaultPoints}
     local fields = {
-        {type='input',label='地点ID（半角英数字・_・-）',default=p.id,required=true,max=48,disabled=point~=nil},
-        {type='input',label='表示名',default=p.label or kindNames[p.kind],required=true,max=64},
+        {type='input',label='地点ID（半角英数字・_・-）',default=p.id,required=true,maxLength=48,disabled=point~=nil},
+        {type='input',label='表示名',default=p.label or kindNames[p.kind],required=true,maxLength=64},
         {type='checkbox',label='現在地・現在の向きに配置する',checked=not point},
     }
     if p.kind == 'shop' then
-        fields[#fields+1] = {type='input',label='店舗のジョブ名',default=p.job,required=true,max=48}
-        fields[#fields+1] = {type='number',label='納品1回の現金報酬',default=p.reward,min=0,max=10000000,required=true}
+        fields[#fields+1] = {type='input',label='店舗のジョブ名',default=p.job,required=true,maxLength=48}
         fields[#fields+1] = {type='number',label='納品1回の箱ポイント',default=p.points,min=1,max=10000,required=true}
+    else
+        fields[#fields+1] = {type='select',label='NPCの表示',default=p.visibility or 'mission',required=true,options={
+            {value='always',label='常時見せる'},
+            {value='mission',label='受注時のみ見せる'},
+        }}
     end
     fields[#fields+1]={type='input',label='NPCモデル名',default=p.model or Config.npcModel,required=true,maxLength=100}
     local input = lib.inputDialog(kindNames[p.kind]..'の配置・編集', fields)
@@ -233,17 +280,21 @@ local function edit(point,kind)
     if not IsModelInCdimage(joaat(model)) or not IsModelAPed(joaat(model)) then notify('有効なNPCモデルを指定してください。') return end
     if input[3] then coords=GetEntityCoords(PlayerPedId()) heading=GetEntityHeading(PlayerPedId())
     else coords=p.coords heading=p.heading end
-    local result = call('manage','save',{id=point and point.id or input[1],label=input[2],kind=p.kind,job=input[4],reward=input[5],points=input[6],
-        coords={x=coords.x,y=coords.y,z=coords.z},heading=heading,model=model})
+    local result = call('manage','save',{id=point and point.id or input[1],label=input[2],kind=p.kind,
+        job=p.kind=='shop' and input[4] or nil,points=p.kind=='shop' and input[5] or nil,
+        coords={x=coords.x,y=coords.y,z=coords.z},heading=heading,model=model,
+        visibility=p.kind=='pickup' and input[4] or nil})
     if result then notify('NPCを保存しました。','success') end
     managerMenu()
 end
 local function exportConfig(list,catalog)
     local lines = {'Config.locations = {'}
     for _,p in ipairs(list) do
-        lines[#lines+1] = ('    { id=%q, label=%q, kind=%q, bucket=%d, coords={x=%.4f,y=%.4f,z=%.4f}, heading=%.2f%s },')
+        lines[#lines+1] = ('    { id=%q, label=%q, kind=%q, bucket=%d, coords={x=%.4f,y=%.4f,z=%.4f}, heading=%.2f%s%s%s },')
             :format(p.id,p.label,p.kind,p.bucket,p.coords.x,p.coords.y,p.coords.z,p.heading,
-                p.kind=='shop' and (', job=%q, reward=%d, points=%d'):format(p.job,p.reward,p.points) or '')
+                p.kind=='shop' and (', job=%q, reward=%d, points=%d'):format(p.job,p.reward,p.points) or '',
+                p.model and (', model=%q'):format(p.model) or '',
+                p.kind=='pickup' and (', visibility=%q'):format(p.visibility or 'mission') or '')
     end
     lines[#lines+1] = '}'
     if catalog then
